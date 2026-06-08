@@ -1,0 +1,17 @@
+{
+  "name": "nubase-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.11.0",
+  "scripts": {
+    "dev:studio": "pnpm --filter @nubase/studio dev",
+    "dev:www": "pnpm --filter @nubase/www dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "prettier": "^3.3.3"
+  }
+}

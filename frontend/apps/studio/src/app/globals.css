@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Drop root font size from the browser default 16px to 14px so the Studio reads at the
+   same density as Supabase's dashboard. Every Tailwind utility is rem-based, so this
+   one declaration proportionally shrinks text-*, spacing (p-/m-/gap-), icon containers,
+   border-radius, etc. in lockstep — no per-component refactor needed.
+
+   What this maps to:
+       text-xs   → 10.5px       text-base → 14px      text-2xl  → 21px
+       text-sm   → 12.25px      text-lg   → 15.75px   text-3xl  → 26.25px
+       h-4 / p-4 → 14px         h-8       → 28px      gap-2     → 7px
+*/
+html {
+  font-size: 14px;
+}
+
+html,
+body {
+  height: 100%;
+}
