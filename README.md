@@ -1,266 +1,197 @@
 # Nubase
 
-**Backend services born for AI.** Nubase is an open-source, AI-native backend platform for AI Coding, agentic applications, and modern product teams: **Memory, Database, Storage, and Auth** in one self-hostable service.
+**Backend services born for AI.** Nubase is an open-source, AI-native backend platform — **Memory, Database, Storage, and Auth** in one self-hostable service. Give AI-generated apps and coding agents a real backend, so they can go from prototype to production without rebuilding the same infrastructure every time.
 
-AI Coding tools can generate UI fast, but real products still need durable memory, authenticated users, isolated databases, file storage, secure APIs, and an operator-friendly dashboard. Nubase packages those backend primitives so AI-generated apps can move from prototype to production without each project rebuilding the same infrastructure.
+> Supabase-style where it makes sense (Postgres, REST, JWTs, RLS, object storage, a Studio dashboard) — plus first-class **Memory**, an **MCP** surface built for AI coding agents, and **multi-project** self-hosting.
 
-Nubase follows the Supabase developer model where it makes sense: Postgres, REST APIs, JWTs, Row Level Security, object storage, and a Studio dashboard. It adds three opinionated changes for teams building with AI:
+---
 
-1. **Memory is a first-class primitive.** Durable user memory, entity extraction, history, and hybrid retrieval are built into the platform, not bolted on as a separate vector-store script.
-2. **AI Coding gets a real backend target.** Agents and coding assistants can create tables, call REST APIs, write memory, inspect schema, and operate through MCP-friendly database tools.
-3. **Self-hosting supports many projects.** A single Nubase control plane can provision and route to multiple isolated project databases.
+## ⚡ Quick Start
+
+### 1. Run Nubase — one command
+
+The all-in-one Docker image bundles **PostgreSQL + Redis + the backend + Studio**:
+
+```bash
+docker run -d --name nubase \
+  -p 3000:3000 -p 9999:9999 -p 5432:5432 \
+  -v nubase_data:/data \
+  <your-namespace>/nubase:latest
+```
+
+- **Studio** → http://localhost:3000 — create an account, create a project, click **Provision** to initialize its database.
+- **API** → http://localhost:9999
+
+> First-boot secrets are generated into the `/data` volume; keep the volume to retain your projects. For a real deployment with stable secrets, see [Self-host with Docker](#-self-host-with-docker).
+
+### 2. Use Nubase in Claude Code or Codex — one command
+
+From your project folder, run:
+
+```bash
+npx -y nubase_cli@latest install-skills
+```
+
+That single command:
+
+- 📚 installs the **Nubase skills** for **both Claude Code and Codex**,
+- 🔌 wires up the **MCP server** config, and
+- 🔐 opens a browser to **authorize** and pick your project.
+
+Then:
+
+- **Claude Code** — restart it in this folder, run `/mcp`, and confirm `nubase` is connected.
+- **Codex** — it's added to `~/.codex/config.toml`; just start Codex.
+
+> Using a remote/hosted instance instead of localhost? Point the CLI at it:
+> ```bash
+> npx -y nubase_cli@latest install-skills \
+>   --studio-url https://studio.example.com \
+>   --nubase-url https://api.example.com
+> ```
+
+### 3. Build with your agent
+
+Your agent can now operate Nubase directly through MCP tools — inspect schema, create tables, run SQL, manage auth & storage, and read/write durable **memory**. Try asking:
+
+> "Create a `todos` table with Row Level Security, insert a few rows via the REST API, and remember that this project uses soft deletes."
+
+---
+
+## 🚀 Self-host with Docker
+
+The single all-in-one image is everything you need to run Nubase on your own box — **one line, no compose file, no external services**.
+
+**Try it (auto-generated secrets, kept in the volume):**
+
+```bash
+docker run -d --name nubase -p 3000:3000 -p 9999:9999 -p 5432:5432 \
+  -v nubase_data:/data <your-namespace>/nubase:latest
+```
+
+**Production (pin stable secrets so encrypted project credentials survive restarts):**
+
+```bash
+docker run -d --name nubase -p 3000:3000 -p 9999:9999 -p 5432:5432 \
+  -v nubase_data:/data \
+  -e PGRST_ENCRYPTION_MASTER_KEY="$(openssl rand -base64 32)" \
+  -e METADATA_SERVICE_ROLE_KEY="$(openssl rand -base64 48)" \
+  <your-namespace>/nubase:latest
+```
+
+Everything else is configured via environment variables — Postgres, Redis, S3/R2 storage, SMTP, OAuth, and LLM providers. See [docs/docker-all-in-one.md](docs/docker-all-in-one.md) for the full list and a multi-architecture (`amd64` + `arm64`) note.
+
+> Replace `<your-namespace>` with the Docker Hub namespace the image is published under.
+
+---
 
 ## Why Nubase
 
-AI-native applications need more than CRUD. They need user memory, retrieval, auth, storage, database APIs, and project isolation from day one. Without that backend layer, every AI Coding session produces another demo that still needs weeks of infrastructure work.
+AI-native applications need more than CRUD. They need user memory, retrieval, auth, storage, database APIs, and project isolation from day one. Without that backend layer, every AI coding session produces another demo that still needs weeks of infrastructure work.
 
-Supabase is excellent, but its open-source self-hosted stack is designed around a single project. The official Supabase self-hosting docs say that self-hosted Supabase "mimics a single project" and Studio does not support multiple organizations or projects. Supabase Cloud has organizations and projects, where each project is a dedicated Supabase instance with sub-services such as Storage, Auth, Functions, and Realtime.
+Supabase is excellent, but its open-source self-hosted stack is designed around a **single** project. Nubase is built for AI teams and self-hosters who want **one Studio, one backend service, and many isolated AI projects** on their own infrastructure — with three opinionated additions:
 
-Nubase is built for AI teams and self-hosters who want one Studio, one backend service, and many isolated AI projects on their own infrastructure.
-
-References:
-
-- Supabase self-hosting: https://supabase.com/docs/guides/self-hosting
-- Supabase organizations and projects: https://supabase.com/docs/guides/platform/billing-faq
-- Supabase product docs: https://supabase.com/docs
+1. **Memory is a first-class primitive** — durable memory, entity extraction, history, and hybrid retrieval are built in, not bolted on as a separate vector-store script.
+2. **AI coding gets a real backend target** — agents create tables, call REST APIs, write memory, and inspect schema through MCP-friendly tools.
+3. **Self-hosting supports many projects** — a single control plane provisions and routes to multiple isolated project databases.
 
 ## Core Features
 
-### Memory
-
-- Native backend memory for AI apps and agents.
-- Mem0-style memory API for adding, searching, updating, deleting, and inspecting memories.
-- LLM-powered fact extraction with ADD, UPDATE, DELETE, and NONE decisions.
-- Hybrid retrieval using pgvector cosine search, Postgres full-text search, and entity boost.
-- Entity store with linked memories for better recall.
-- Append-only memory history for audit and debugging.
-- OpenAI, Anthropic, and OpenAI-compatible provider support.
-
-### Database
-
-- One physical PostgreSQL database per project.
-- Java implementation of a PostgREST-compatible `/rest/v1/*` API.
-- A stable backend surface that AI Coding tools can target with generated SQL and API calls.
-- Select, filter, order, pagination, insert, update, upsert, and delete.
-- Per-project JWT secrets, roles, and schema cache.
-- Row Level Security with JWT claims.
-- HikariCP routing data sources per project.
-
-### Auth
-
-- Supabase-style Auth endpoints for signup, login, refresh token rotation, user management, and admin operations.
-- Email/password auth.
-- OAuth provider abstraction with Google, GitHub, and WeChat providers.
-- Per-project `anon`, `authenticated`, and `service_role` tokens.
-- User Bearer tokens for RLS and memory ownership.
-
-### Storage
-
-- S3-compatible storage backend.
-- Designed for Cloudflare R2, AWS S3, MinIO, and compatible APIs.
-- Bucket metadata in Postgres.
-- Public/private buckets, signed URLs, file size limits, and MIME controls.
-- Optional S3 Vectors integration for large asset/document vector workloads.
-
-### Studio
-
-- Next.js dashboard for projects, SQL, auth users, storage, and memory.
-- Project creation and database provisioning.
-- SQL editor and execution history.
-- Memory explorer with search, entities, history, settings, and reset flows.
-- Platform settings for SMTP, storage, OAuth, and LLM providers.
-
-### AI Coding and Agents
-
-- Database MCP tools for schema inspection, SQL execution, RLS export, and project initialization.
-- A consistent API model for generated apps: Auth, REST, Storage, and Memory share the same project token model.
-- Project-level isolation so generated apps do not share one accidental database boundary.
-- Built-in Studio for humans to review and repair what AI Coding tools create.
+- **🧠 Memory** — Mem0-style memory API; LLM-powered fact extraction (ADD/UPDATE/DELETE/NONE); hybrid retrieval over pgvector + Postgres full-text + entity boost; entity store and append-only history. Works with OpenAI, Anthropic, and OpenAI-compatible providers.
+- **🗄️ Database** — one isolated PostgreSQL per project; a PostgREST-compatible `/rest/v1` API (select/filter/order/paginate/insert/update/upsert/delete); per-project JWT secrets, roles, and schema cache; Row Level Security with JWT claims.
+- **🔐 Auth** — Supabase-style signup/login and refresh-token rotation; MFA/TOTP, OTP & magic links, anonymous sign-in; OAuth (Google / GitHub / WeChat) and SAML SSO; per-project `anon` / `authenticated` / `service_role` tokens.
+- **📦 Storage** — S3-compatible (Cloudflare R2 / AWS S3 / MinIO); public/private buckets, signed URLs, size & MIME controls; optional S3 Vectors for large document/asset workloads.
+- **🤖 AI Gateway** — OpenAI- and Anthropic-compatible endpoints with per-project keys and token/cost usage tracking.
+- **🧰 AI Coding & Agents** — an MCP bridge (`nubase_cli`) for schema inspection, SQL execution, RLS export, project init, and memory; one consistent project-token model across Auth, REST, Storage, and Memory.
+- **🎛️ Studio** — a Next.js dashboard for projects, SQL (with execution history), users, storage, and the memory explorer.
 
 ## Nubase vs Supabase
 
 | Area | Supabase Cloud | Supabase self-hosted | Nubase |
 | --- | --- | --- | --- |
-| Multi-project dashboard | Yes | No, self-hosted mimics one project | Yes |
-| Project isolation | Dedicated project instance | One local/self-hosted project | Dedicated Postgres database per project |
-| Database API | PostgREST | PostgREST | Java PostgREST-compatible API |
+| Multi-project dashboard | Yes | No (mimics one project) | **Yes** |
+| Project isolation | Dedicated instance | One local project | **Dedicated Postgres DB per project** |
+| Database API | PostgREST | PostgREST | PostgREST-compatible (Java) |
 | Auth | Yes | Yes | Supabase-style Auth |
-| Storage | Yes | Yes | S3/R2-compatible storage |
-| Realtime | Yes | Available in Supabase stack | Not implemented yet |
-| Edge Functions | Yes | Available in Supabase stack | Not implemented yet |
-| AI memory | Not a core product primitive | Not a core product primitive | Built-in Memory pillar |
-| AI Coding backend target | General backend primitives | General backend primitives | Memory + REST + MCP + Studio for generated apps |
-| Self-hosted operations | Managed by Supabase in Cloud | Operator-managed stack | Operator-managed, multi-project-first |
+| Storage | Yes | Yes | S3/R2-compatible |
+| AI memory | Not a core primitive | Not a core primitive | **Built-in Memory pillar** |
+| AI coding backend target | General primitives | General primitives | **Memory + REST + MCP + Studio** |
+| Realtime / Edge Functions | Yes | Available in stack | Not yet |
 
 ## Architecture
 
 Nubase has two database layers:
 
-- **Metadata database**: stores platform users, project configs, encrypted project credentials, project ownership, platform settings, SQL snippets, and SQL execution records.
-- **Project databases**: each project gets its own PostgreSQL database containing auth tables, storage metadata, memory tables, and application tables.
+- **Metadata database** — platform users, project configs, encrypted project credentials, ownership, platform settings, SQL snippets, and execution records.
+- **Project databases** — each project gets its own PostgreSQL database with auth tables, storage metadata, memory tables, and application tables.
 
-Incoming API requests use a two-token model:
+Requests use a two-token model: `apikey` identifies the project + role (`anon` / `authenticated` / `service_role`), and `Authorization: Bearer <jwt>` identifies the end user for RLS and memory ownership. A request filter resolves the project from the `apikey`, routes JDBC to the correct project database, and sets the request context.
 
-- `apikey`: identifies the project and role (`anon`, `authenticated`, or `service_role`).
-- `Authorization: Bearer <jwt>`: identifies the end user for RLS and memory ownership.
+## Run from source (development)
 
-The request filter resolves the project from the `apikey`, loads the matching database config, routes JDBC to the correct project database, and sets the request context.
-
-## Quickstart
-
-Requirements:
-
-- Java 17
-- Maven
-- Docker
-- Postgres 15 with pgvector
-- Node.js and pnpm for Studio
-
-Start Postgres:
+Requirements: Java 17, Maven, Docker, Node.js + pnpm.
 
 ```bash
+# 1. Start Postgres (15 + pgvector)
 docker compose -f pg-docker-compose.yml up -d
-```
 
-Set required secrets:
-
-```bash
+# 2. Required secrets
 export PGRST_ENCRYPTION_MASTER_KEY="$(openssl rand -base64 32)"
 export METADATA_SERVICE_ROLE_KEY="replace-with-a-long-random-admin-token"
+export OPENAI_API_KEY="sk-..."   # optional, only for LLM-powered Memory
 
-# Optional, required only for LLM-powered Memory extraction/search.
-export OPENAI_API_KEY="sk-..."
-```
-
-Start the backend:
-
-```bash
+# 3. Backend → http://localhost:9999
 mvn spring-boot:run
+
+# 4. Studio → http://localhost:3000
+cd frontend && pnpm install && pnpm dev:studio
 ```
 
-Start Studio:
+To build the all-in-one image yourself: `docker build -f Dockerfile.all-in-one -t nubase:local .`
 
-```bash
-cd frontend
-pnpm install
-pnpm dev:studio
-```
+## Examples
 
-Open:
-
-- Backend: http://localhost:9999
-- Studio: http://localhost:3000
-
-Create a platform account in Studio, create a project, provision the database, then copy the project keys from settings.
-
-## Example: Write and Search Memory
+**Write and search memory:**
 
 ```bash
 curl -X POST http://localhost:9999/mem/v1/memories \
-  -H "apikey: $NUBASE_SERVICE_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "userId": "user-42",
-    "messages": [
-      {
-        "role": "user",
-        "content": "I prefer steak over sushi and my dog is named Mochi."
-      }
-    ]
-  }'
-```
+  -H "apikey: $NUBASE_SERVICE_KEY" -H "Content-Type: application/json" \
+  -d '{"userId":"user-42","messages":[{"role":"user","content":"I prefer steak over sushi and my dog is named Mochi."}]}'
 
-```bash
 curl -X POST http://localhost:9999/mem/v1/search \
-  -H "apikey: $NUBASE_SERVICE_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "userId": "user-42",
-    "query": "what food do they like?"
-  }'
+  -H "apikey: $NUBASE_SERVICE_KEY" -H "Content-Type: application/json" \
+  -d '{"userId":"user-42","query":"what food do they like?"}'
 ```
 
-## Example: Use the REST API
-
-Create a table:
-
-```sql
-create table public.todos (
-  id bigserial primary key,
-  text text not null,
-  done boolean default false
-);
-```
-
-Query it:
+**Use the REST API** (after creating a `todos` table):
 
 ```bash
-curl "http://localhost:9999/rest/v1/todos?select=*" \
-  -H "apikey: $NUBASE_ANON_KEY"
-```
+curl "http://localhost:9999/rest/v1/todos?select=*" -H "apikey: $NUBASE_ANON_KEY"
 
-Insert a row:
-
-```bash
 curl -X POST "http://localhost:9999/rest/v1/todos" \
-  -H "apikey: $NUBASE_SERVICE_KEY" \
-  -H "Content-Type: application/json" \
+  -H "apikey: $NUBASE_SERVICE_KEY" -H "Content-Type: application/json" \
   -d '{"text":"Ship the first open-source release"}'
 ```
 
 ## Documentation
 
-- [Documentation plan](docs/documentation-plan.md)
+- [Getting started](docs/getting-started.md)
+- [Connect agents (Claude / Codex / Cursor)](docs/agent-connect.md)
+- [MCP & agent guide](docs/mcp.md)
+- [nubase_cli usage](docs/nubase-cli-usage.md)
+- [All-in-one Docker image](docs/docker-all-in-one.md)
+- [Architecture](docs/architecture.md)
 - [Product overview](docs/product-overview.md)
 - [Supabase comparison](docs/supabase-comparison.md)
-- [Getting started](docs/getting-started.md)
-- [Architecture](docs/architecture.md)
-- [MCP and agent guide](docs/mcp.md)
-- [Connect agents](docs/agent-connect.md)
 
-## Status
+## Status & roadmap
 
-Nubase is early-stage infrastructure. The current codebase already includes the main pillars, but the public release should still go through security hardening, license selection, secret cleanup, and clearer defaults before production use.
-
-Known gaps:
-
-- Realtime is not implemented yet.
-- Edge Functions are not implemented yet.
-- Backups, PITR, HA, billing, and enterprise SSO are not included in the open-source core.
-- Some management endpoints should be reviewed before exposing the server to the public internet.
-
-## Commercial Boundary
-
-Recommended open-source core:
-
-- Multi-project self-hosting
-- Database-per-project isolation
-- Auth, Storage, PostgREST-compatible REST API
-- Memory API
-- Local Studio
-
-Recommended commercial layer:
-
-- Team/org management
-- Fine-grained RBAC
-- SSO/SAML/SCIM
-- Audit logs
-- Backups and PITR
-- Monitoring and quotas
-- Managed hosting
-- Enterprise support
+Nubase is early-stage but the core pillars (Memory, Database, Auth, Storage, AI Gateway, Studio, MCP) are in place. Not yet implemented: **Realtime**, **Edge Functions**, and operational extras like backups/PITR, HA, and enterprise SSO/SCIM. Review the admin/management endpoints before exposing a server to the public internet.
 
 ## Contributing
 
-This repository is being prepared for an open-source release. Before accepting external contributions, add:
-
-- `LICENSE`
-- `CONTRIBUTING.md`
-- `SECURITY.md`
-- issue templates
-- coding standards
-- release process
+Contributions and issues are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md). This is an early public release, so feedback shapes what comes next. 🙌
 
 ## License
 
-License has not been selected yet. Choose one before publishing publicly.
+[Apache-2.0](LICENSE).
