@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import {
   FolderGit2,
+  Box,
   Plus,
   User,
   Home,
@@ -64,8 +65,8 @@ const COLLAPSE_KEY = 'nubase.studio.sidebar.collapsed';
 /**
  * Single shell used by both workspace pages (Projects/New/Account) and project-internal pages.
  *
- * <p>Sidebar collapses to icons-only (w-14, 56px) by default; user can expand to a full
- * label rail (w-56, 224px). Preference is persisted to localStorage so the choice sticks
+ * <p>Sidebar is expanded by default and can collapse to icons-only (w-14, 56px).
+ * Preference is persisted to localStorage so the choice sticks
  * across pages and reloads. Collapsed mode uses native {@code title} tooltips for label
  * disclosure — no popover library required.
  */
@@ -133,14 +134,11 @@ export function WorkspaceShell({
     router.push(`/project/${next.ref}`);
   }
 
-  // Default collapsed. Hydrate from localStorage on mount to honor user preference.
-  // Server render is always collapsed to avoid a layout-shift flash on first paint
-  // (any other initial state would mismatch the hydrated state on first reload).
-  const [collapsed, setCollapsed] = useState(true);
+  const [collapsed, setCollapsed] = useState(false);
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const stored = window.localStorage.getItem(COLLAPSE_KEY);
-    if (stored === 'false') setCollapsed(false);
+    if (stored === 'true') setCollapsed(true);
   }, []);
   const toggle = () => {
     setCollapsed((prev) => {
@@ -155,33 +153,40 @@ export function WorkspaceShell({
   };
 
   return (
-    <div className="flex h-screen w-full">
+    <div className="flex h-screen w-full bg-background text-[0.95rem]">
       <aside
         className={cn(
-          'flex flex-col border-r border-border bg-card transition-[width] duration-200 ease-out',
-          collapsed ? 'w-14' : 'w-56'
+          'flex flex-col border-r border-border/80 bg-card transition-[width] duration-200 ease-out',
+          collapsed ? 'w-14' : 'w-[244px]'
         )}
       >
         {/* Brand row: logo always visible, wordmark hides when collapsed */}
         <div
           className={cn(
-            'flex items-center gap-2 px-3 py-3',
+            'flex h-[54px] items-center gap-2 px-3',
             collapsed && 'justify-center px-0'
           )}
         >
-          <span className="inline-block h-6 w-6 shrink-0 rounded-md bg-brand" />
+          <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-brand to-emerald-700 text-xs font-bold text-brand-foreground shadow-sm">
+            N
+          </span>
           {!collapsed && (
-            <Link href="/projects" className="text-sm font-semibold tracking-tight">
-              nubase
-            </Link>
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <Link href="/projects" className="truncate text-[15px] font-bold">
+                nubase
+              </Link>
+              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                Studio
+              </span>
+            </div>
           )}
         </div>
 
-        <nav className="flex-1 overflow-y-auto px-2 py-2">
+        <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
           {activeProjectRef ? (
             <>
               {!collapsed && (
-                <div className="mb-1 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                <div className="mb-1 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
                   Project
                 </div>
               )}
@@ -189,14 +194,14 @@ export function WorkspaceShell({
                 <SidebarLink key={item.href} item={item} pathname={pathname} collapsed={collapsed} />
               ))}
               {!collapsed && (
-                <div className="mt-4 mb-1 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                <div className="mb-1 mt-5 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
                   Workspace
                 </div>
               )}
             </>
           ) : (
             !collapsed && (
-              <div className="mb-1 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <div className="mb-1 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
                 Workspace
               </div>
             )
@@ -211,17 +216,17 @@ export function WorkspaceShell({
             the toggle stays reachable regardless of how many nav items there are. */}
         <div
           className={cn(
-            'flex items-center border-t border-border px-2 py-2',
+            'flex items-center border-t border-border/80 px-3 py-3',
             collapsed ? 'justify-center' : 'justify-between'
           )}
         >
           {!collapsed && (
-            <span className="text-[10px] text-muted-foreground">v0.1 · Self-hosted</span>
+            <span className="text-[11px] font-medium text-muted-foreground">v0.1 · Self-hosted</span>
           )}
           <button
             type="button"
             onClick={toggle}
-            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            className="rounded-md border border-transparent p-1.5 text-muted-foreground transition-colors hover:border-border hover:bg-accent hover:text-foreground"
             title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
@@ -235,7 +240,7 @@ export function WorkspaceShell({
       </aside>
 
       <main className="flex flex-1 flex-col overflow-hidden">
-        <header className="flex h-12 items-center justify-between gap-3 border-b border-border bg-background px-4">
+        <header className="flex h-[54px] items-center justify-between gap-3 border-b border-border/80 bg-card px-6">
           <div className="min-w-0">
             {activeProjectRef ? (
               <ProjectSwitcher
@@ -249,7 +254,7 @@ export function WorkspaceShell({
           <UserMenu />
         </header>
         {showWarn ? (
-          <div className="flex items-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-300">
+          <div className="flex items-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-6 py-2 text-xs text-amber-700 dark:text-amber-300">
             <AlertTriangle className="h-3.5 w-3.5" />
             <span>
               Project is <strong className="font-semibold">{project?.initStatus?.toLowerCase()}</strong> —
@@ -257,7 +262,7 @@ export function WorkspaceShell({
             </span>
           </div>
         ) : null}
-        <div className="flex flex-1 flex-col overflow-y-auto">{children}</div>
+        <div className="flex flex-1 flex-col overflow-y-auto bg-background">{children}</div>
       </main>
     </div>
   );
@@ -308,33 +313,49 @@ function ProjectSwitcher({
   }
 
   return (
-    <div ref={wrapRef} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex h-8 min-w-0 max-w-[320px] items-center gap-2 rounded-md border border-border bg-card px-2.5 text-left transition-colors hover:bg-accent"
-        aria-haspopup="menu"
-        aria-expanded={open}
-      >
-        <FolderGit2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-        <span className="min-w-0">
-          <span className="block truncate text-xs font-medium leading-3">{activeProjectName}</span>
-          <span className="block truncate font-mono text-[10px] leading-3 text-muted-foreground">
-            {activeProjectRef}
+    <div ref={wrapRef} className="relative min-w-0">
+      <div className="flex min-w-0 items-center gap-3 text-sm">
+        <Link
+          href="/projects"
+          className="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 font-semibold text-foreground transition-colors hover:bg-accent"
+        >
+          <FolderGit2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="hidden truncate sm:inline">Workspace</span>
+          <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+            Local
           </span>
-        </span>
-        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-      </button>
+        </Link>
+        <span className="text-lg font-light text-muted-foreground/70">/</span>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left font-semibold text-foreground transition-colors hover:bg-accent"
+          aria-haspopup="menu"
+          aria-expanded={open}
+        >
+          <Box className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 truncate text-[15px]">{activeProjectName}</span>
+          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+        </button>
+        <span className="hidden text-lg font-light text-muted-foreground/70 md:inline">/</span>
+        <div className="hidden min-w-0 items-center gap-2 md:flex">
+          <span className="truncate font-mono text-[13px] font-semibold text-foreground">main</span>
+          <span className="rounded-full border border-emerald-600/25 bg-emerald-500/10 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-emerald-700 dark:text-emerald-300">
+            Ready
+          </span>
+        </div>
+      </div>
 
       {open ? (
         <div
           role="menu"
-          className="absolute left-0 z-50 mt-1 max-h-80 w-72 overflow-y-auto rounded-md border border-border bg-popover py-1 text-popover-foreground shadow-lg"
+          className="absolute left-[120px] z-50 mt-3 max-h-96 w-80 overflow-y-auto rounded-lg border border-border bg-popover py-1 text-popover-foreground shadow-xl shadow-slate-950/10 sm:left-[168px]"
         >
-          <div className="border-b border-border px-3 py-2">
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <div className="border-b border-border bg-muted/35 px-3 py-2.5">
+            <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
               Switch project
             </div>
+            <div className="mt-0.5 truncate text-xs text-muted-foreground">{activeProjectRef}</div>
           </div>
           {projects.length > 0 ? (
             projects.map((project) => {
@@ -345,13 +366,16 @@ function ProjectSwitcher({
                   type="button"
                   onClick={() => select(project)}
                   className={cn(
-                    'flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent',
+                    'flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm hover:bg-accent',
                     active && 'bg-accent/70'
                   )}
                   role="menuitem"
                 >
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-background">
+                    <Box className="h-3.5 w-3.5 text-muted-foreground" />
+                  </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate">{project.name ?? project.ref}</span>
+                    <span className="block truncate font-semibold">{project.name ?? project.ref}</span>
                     <span className="block truncate font-mono text-[10px] text-muted-foreground">
                       {project.ref}
                     </span>
@@ -387,13 +411,13 @@ function SidebarLink({
       // free hover tooltips so users don't lose their bearings in icon-only mode.
       title={collapsed ? item.label : undefined}
       className={cn(
-        'flex items-center rounded-md text-sm transition-colors',
+        'flex items-center rounded-lg text-sm font-medium transition-colors',
         collapsed
-          ? 'justify-center px-0 py-2'
-          : 'gap-2 px-2.5 py-1.5',
+          ? 'justify-center px-0 py-2.5'
+          : 'gap-2.5 px-3 py-2.5',
         active
-          ? 'bg-accent text-accent-foreground'
-          : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
+          ? 'bg-accent text-accent-foreground shadow-[inset_0_0_0_1px_hsl(var(--border))]'
+          : 'text-muted-foreground hover:bg-accent/65 hover:text-foreground'
       )}
     >
       <Icon className="h-4 w-4 shrink-0" />

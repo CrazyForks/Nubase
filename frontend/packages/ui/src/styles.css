@@ -1,36 +1,36 @@
 :root {
-  --background: 0 0% 100%;
-  --foreground: 222 14% 14%;
+  --background: 210 17% 98%;
+  --foreground: 222 16% 12%;
 
   --card: 0 0% 100%;
-  --card-foreground: 222 14% 14%;
+  --card-foreground: 222 16% 12%;
 
   --popover: 0 0% 100%;
-  --popover-foreground: 222 14% 14%;
+  --popover-foreground: 222 16% 12%;
 
-  --primary: 222 14% 14%;
+  --primary: 222 16% 12%;
   --primary-foreground: 0 0% 100%;
 
-  --secondary: 220 10% 96%;
-  --secondary-foreground: 222 14% 14%;
+  --secondary: 210 14% 93%;
+  --secondary-foreground: 222 16% 12%;
 
-  --muted: 220 10% 96%;
-  --muted-foreground: 220 8% 46%;
+  --muted: 210 15% 95%;
+  --muted-foreground: 220 7% 43%;
 
-  --accent: 220 10% 94%;
-  --accent-foreground: 222 14% 14%;
+  --accent: 210 12% 91%;
+  --accent-foreground: 222 16% 12%;
 
   --destructive: 0 72% 51%;
   --destructive-foreground: 0 0% 100%;
 
-  --border: 220 13% 91%;
-  --input: 220 13% 91%;
-  --ring: 222 14% 14%;
+  --border: 214 12% 86%;
+  --input: 214 12% 84%;
+  --ring: 216 12% 34%;
 
-  --brand: 158 64% 39%;
+  --brand: 162 70% 34%;
   --brand-foreground: 0 0% 100%;
 
-  --radius: 0.5rem;
+  --radius: 0.55rem;
 }
 
 .dark {
@@ -69,7 +69,12 @@
 body {
   background-color: hsl(var(--background));
   color: hsl(var(--foreground));
+  text-rendering: geometricPrecision;
   font-feature-settings:
     'rlig' 1,
     'calt' 1;
+}
+
+::selection {
+  background: hsl(var(--brand) / 0.18);
 }

@@ -14,11 +14,11 @@ function applyTheme(t: Theme) {
 }
 
 export function ThemeToggle({ className }: { className?: string }) {
-  const [theme, setTheme] = useState<Theme>('dark');
+  const [theme, setTheme] = useState<Theme>('light');
 
   useEffect(() => {
     const stored = (typeof window !== 'undefined' ? window.localStorage.getItem(STORAGE_KEY) : null) as Theme | null;
-    const initial: Theme = stored === 'light' || stored === 'dark' ? stored : 'dark';
+    const initial: Theme = stored === 'light' || stored === 'dark' ? stored : 'light';
     setTheme(initial);
     applyTheme(initial);
   }, []);
@@ -37,7 +37,7 @@ export function ThemeToggle({ className }: { className?: string }) {
   return (
     <button
       onClick={toggle}
-      className={'rounded-md border border-transparent p-1.5 text-muted-foreground hover:border-border hover:bg-accent ' + (className ?? '')}
+      className={'rounded-md border border-transparent p-1.5 text-muted-foreground transition-colors hover:border-border hover:bg-accent hover:text-foreground ' + (className ?? '')}
       aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
       title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
     >

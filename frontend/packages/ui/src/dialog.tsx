@@ -41,14 +41,14 @@ export function Dialog({ open, onClose, onOpenChange, children, size = 'max-w-md
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-sm"
       onClick={close}
       role="dialog"
       aria-modal="true"
     >
       <div
         className={cn(
-          'w-full overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-xl',
+          'w-full overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-2xl shadow-slate-950/15',
           size
         )}
         onClick={(e) => e.stopPropagation()}
@@ -71,7 +71,7 @@ export function DialogHeader({
   onClose?: () => void;
 }) {
   return (
-    <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+    <div className="flex items-start justify-between gap-4 border-b border-border bg-muted/35 px-5 py-4">
       <div className="space-y-1">
         <h2 className="text-base font-semibold">{title ?? children}</h2>
         {description ? <p className="text-xs text-muted-foreground">{description}</p> : null}
@@ -79,7 +79,7 @@ export function DialogHeader({
       {onClose ? (
         <button
           onClick={onClose}
-          className="rounded-md p-1 text-muted-foreground hover:bg-accent"
+          className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           aria-label="Close"
         >
           <X className="h-4 w-4" />
@@ -95,7 +95,7 @@ export function DialogBody({ children, className }: { children: React.ReactNode;
 
 export function DialogFooter({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-end gap-2 border-t border-border bg-background/60 px-5 py-3">
+    <div className="flex items-center justify-end gap-2 border-t border-border bg-muted/35 px-5 py-3">
       {children}
     </div>
   );
