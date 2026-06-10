@@ -40,6 +40,13 @@ public class LocalHttpEdgeFunctionExecutor implements EdgeFunctionExecutor {
         return EdgeFunctionDeploymentResponse.deployed(provider(), deploymentId);
     }
 
+    // The local runtime holds no deploy-time state, so secrets must be supplied on
+    // every invocation (forwarded as x-nubase-env-* headers below).
+    @Override
+    public boolean injectsEnvAtInvoke() {
+        return true;
+    }
+
     @Override
     public void delete(String projectRef, String functionSlug, String providerDeploymentId) {
         log.debug("Local edge function delete is a no-op: projectRef={}, slug={}, deploymentId={}",

@@ -41,7 +41,7 @@ interface InvocationLog {
   statusCode?: number | null;
   durationMs?: number | null;
   executorProvider?: string | null;
-  callerType?: string | null;
+  callerRole?: string | null;
   callerUserId?: string | null;
   errorCode?: string | null;
   errorMessage?: string | null;
@@ -89,13 +89,15 @@ function FunctionsInner({ projectRef }: { projectRef: string }) {
       ]);
       setFunctions(fns);
       setLogs(invocations);
-      if (!selected && fns[0]) setSelected(fns[0].slug);
+      // Functional update keeps `selected` out of the deps, so changing the
+      // sidebar selection does not refetch the whole list.
+      setSelected((prev) => prev ?? fns[0]?.slug ?? null);
     } catch (err) {
       setError((err as ApiError).message ?? 'Failed to load functions.');
     } finally {
       setLoading(false);
     }
-  }, [apikey, selected]);
+  }, [apikey]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -397,7 +399,7 @@ function FunctionsInner({ projectRef }: { projectRef: string }) {
                             <td className="px-3 py-2 font-mono">{log.method}</td>
                             <td className="px-3 py-2 font-mono">{log.path || '/'}</td>
                             <td className="px-3 py-2">{log.statusCode ?? log.errorCode ?? '-'}</td>
-                            <td className="px-3 py-2">{log.callerType ?? '-'}</td>
+                            <td className="px-3 py-2">{log.callerRole ?? '-'}</td>
                             <td className="px-3 py-2">{log.durationMs ?? 0}ms</td>
                           </tr>
                         ))}

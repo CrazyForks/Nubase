@@ -22,7 +22,7 @@
   "publishConfig": {
     "access": "public"
   },
-  "dependencies": {
+  "optionalDependencies": {
     "esbuild": "0.21.5"
   },
   "devDependencies": {

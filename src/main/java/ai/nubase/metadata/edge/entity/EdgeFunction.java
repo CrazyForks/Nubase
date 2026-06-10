@@ -16,6 +16,8 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -56,6 +58,9 @@ public class EdgeFunction {
     @Column(name = "privileged", nullable = false)
     private Boolean privileged;
 
+    // String-typed jsonb needs an explicit JSON JDBC type or Postgres rejects the
+    // varchar-typed bind parameter (same pattern as VectorIndex.metadataConfiguration).
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "import_map", columnDefinition = "jsonb")
     private String importMap;
 

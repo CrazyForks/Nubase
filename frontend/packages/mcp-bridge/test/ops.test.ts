@@ -200,6 +200,75 @@ test('list_migrations returns an empty list when the table is absent', async () 
   assert.match(result.note, /No migrations recorded/);
 });
 
+test('functions_invoke returns the envelope for function 4xx/5xx instead of throwing', async () => {
+  const config: BridgeConfig = {
+    nubaseUrl: 'http://localhost:9999',
+    projectKey: 'service-role-key',
+    allowSqlExecute: false,
+    allowDangerousSql: false,
+    allowAdminWrite: false,
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ error: 'invalid payload' }), {
+      status: 422,
+      headers: { 'Content-Type': 'application/json' },
+    })) as typeof fetch;
+
+  let result: Record<string, any>;
+  try {
+    result = (await new NubaseClient(config).functionsInvoke({
+      slug: 'hello',
+      method: 'POST',
+      body: '{}',
+    })) as Record<string, any>;
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(result.status, 422);
+  assert.deepEqual(result.data, { error: 'invalid payload' });
+  assert.equal(result.headers['content-type'], 'application/json');
+});
+
+test('functions_invoke still throws on network-level failures', async () => {
+  const config: BridgeConfig = {
+    nubaseUrl: 'http://localhost:9999',
+    projectKey: 'service-role-key',
+    allowSqlExecute: false,
+    allowDangerousSql: false,
+    allowAdminWrite: false,
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    throw new TypeError('fetch failed');
+  }) as typeof fetch;
+  try {
+    await assert.rejects(
+      () => new NubaseClient(config).functionsInvoke({ slug: 'hello' }),
+      /fetch failed/
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('other client calls still throw on non-2xx responses', async () => {
+  const config: BridgeConfig = {
+    nubaseUrl: 'http://localhost:9999',
+    projectKey: 'service-role-key',
+    allowSqlExecute: false,
+    allowDangerousSql: false,
+    allowAdminWrite: false,
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response('forbidden', { status: 403 })) as typeof fetch;
+  try {
+    await assert.rejects(() => new NubaseClient(config).functionsList(), /forbidden/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('overview aggregates every read section in one call and echoes permissions', async () => {
   const { client, calls, restore } = makeClient({ allowSqlExecute: true, userJwt: 'jwt', agentId: 'codex' });
   let result: Record<string, any>;

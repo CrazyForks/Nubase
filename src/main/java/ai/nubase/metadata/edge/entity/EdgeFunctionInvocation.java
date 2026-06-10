@@ -64,17 +64,11 @@ public class EdgeFunctionInvocation {
     @Column(name = "error_message", columnDefinition = "TEXT")
     private String errorMessage;
 
-    @Column(name = "caller_type", length = 32)
-    private String callerType;
-
     @Column(name = "caller_role", length = 64)
     private String callerRole;
 
     @Column(name = "caller_user_id")
     private UUID callerUserId;
-
-    @Column(name = "caller_platform_user_id")
-    private UUID callerPlatformUserId;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;

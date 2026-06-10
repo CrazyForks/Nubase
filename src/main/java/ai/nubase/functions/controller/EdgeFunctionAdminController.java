@@ -10,7 +10,6 @@ import ai.nubase.functions.dto.EdgeFunctionDtos.InvocationLogResponse;
 import ai.nubase.functions.dto.EdgeFunctionDtos.SetFunctionSecretsRequest;
 import ai.nubase.functions.dto.EdgeFunctionDtos.UpdateFunctionRequest;
 import ai.nubase.functions.service.EdgeFunctionAdminService;
-import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -26,7 +25,6 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 @RestController
 @RequestMapping("/functions/admin/v1")
@@ -42,11 +40,8 @@ public class EdgeFunctionAdminController {
     }
 
     @PostMapping("/functions")
-    public ResponseEntity<EdgeFunctionResponse> create(
-            @Valid @RequestBody CreateFunctionRequest request,
-            HttpServletRequest servletRequest
-    ) {
-        return ResponseEntity.ok(EdgeFunctionResponse.from(adminService.createFunction(request, platformUserId(servletRequest))));
+    public ResponseEntity<EdgeFunctionResponse> create(@Valid @RequestBody CreateFunctionRequest request) {
+        return ResponseEntity.ok(EdgeFunctionResponse.from(adminService.createFunction(request)));
     }
 
     @GetMapping("/functions/{slug}")
@@ -57,19 +52,17 @@ public class EdgeFunctionAdminController {
     @PatchMapping("/functions/{slug}")
     public ResponseEntity<EdgeFunctionResponse> update(
             @PathVariable String slug,
-            @Valid @RequestBody UpdateFunctionRequest request,
-            HttpServletRequest servletRequest
+            @Valid @RequestBody UpdateFunctionRequest request
     ) {
-        return ResponseEntity.ok(EdgeFunctionResponse.from(adminService.updateFunction(slug, request, platformUserId(servletRequest))));
+        return ResponseEntity.ok(EdgeFunctionResponse.from(adminService.updateFunction(slug, request)));
     }
 
     @PostMapping("/functions/{slug}/deploy")
     public ResponseEntity<EdgeFunctionVersionResponse> deploy(
             @PathVariable String slug,
-            @Valid @RequestBody DeployFunctionRequest request,
-            HttpServletRequest servletRequest
+            @Valid @RequestBody DeployFunctionRequest request
     ) {
-        return ResponseEntity.ok(EdgeFunctionVersionResponse.from(adminService.deploy(slug, request, platformUserId(servletRequest))));
+        return ResponseEntity.ok(EdgeFunctionVersionResponse.from(adminService.deploy(slug, request)));
     }
 
     @GetMapping("/functions/{slug}/versions")
@@ -91,10 +84,9 @@ public class EdgeFunctionAdminController {
     @PostMapping("/functions/{slug}/secrets")
     public ResponseEntity<List<FunctionSecretResponse>> setSecrets(
             @PathVariable String slug,
-            @Valid @RequestBody SetFunctionSecretsRequest request,
-            HttpServletRequest servletRequest
+            @Valid @RequestBody SetFunctionSecretsRequest request
     ) {
-        return ResponseEntity.ok(adminService.setSecrets(slug, request, platformUserId(servletRequest))
+        return ResponseEntity.ok(adminService.setSecrets(slug, request)
                 .stream().map(FunctionSecretResponse::from).toList());
     }
 
@@ -106,10 +98,5 @@ public class EdgeFunctionAdminController {
         return ResponseEntity.ok(adminService.listInvocations(function, limit).stream()
                 .map(InvocationLogResponse::from)
                 .toList());
-    }
-
-    private UUID platformUserId(HttpServletRequest request) {
-        Object value = request.getAttribute("platformUserId");
-        return value instanceof UUID id ? id : null;
     }
 }

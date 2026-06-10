@@ -111,6 +111,49 @@ class CloudflareEdgeFunctionExecutorTest {
         }
     }
 
+    @Test
+    void signaturePayloadMatchesDispatcherContract() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(new MockResponse().setResponseCode(200).setBody("ok"));
+            server.start();
+            EdgeFunctionExecutorProperties props = props(server.url("/dispatch").toString());
+            var executor = new CloudflareEdgeFunctionExecutor(props, new ObjectMapper());
+
+            byte[] body = "{\"a\":1}".getBytes(StandardCharsets.UTF_8);
+            executor.invoke(new EdgeFunctionInvocationRequest(
+                    "req-1",
+                    "app1",
+                    "hello",
+                    "nubase-app1-hello",
+                    "POST",
+                    "/a%20b/c",
+                    "x=1",
+                    Map.of("Content-Type", List.of("application/json")),
+                    body,
+                    Map.of()
+            ));
+
+            var recorded = server.takeRequest();
+            String timestamp = recorded.getHeader("x-nubase-timestamp");
+            // Payload contract shared with worker.js verifySignature and worker.test.js:
+            // requestId, projectRef, functionSlug, deploymentId, METHOD, rawPathSuffix,
+            // rawQuery, timestamp, sha256Hex(body)
+            String bodyHash = java.util.HexFormat.of().formatHex(
+                    java.security.MessageDigest.getInstance("SHA-256").digest(body));
+            String payload = String.join("\n",
+                    "req-1", "app1", "hello", "nubase-app1-hello", "POST", "/a%20b/c", "x=1", timestamp, bodyHash);
+            javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+            mac.init(new javax.crypto.spec.SecretKeySpec("secret".getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            String expected = java.util.HexFormat.of().formatHex(mac.doFinal(payload.getBytes(StandardCharsets.UTF_8)));
+
+            assertThat(recorded.getHeader("x-nubase-signature")).isEqualTo(expected);
+            assertThat(recorded.getHeader("x-nubase-deployment-id")).isEqualTo("nubase-app1-hello");
+            // The signed raw suffix must be exactly what appears in the forwarded URL,
+            // so the dispatcher can verify against its own pathname.
+            assertThat(recorded.getPath()).isEqualTo("/dispatch/app1/hello/a%20b/c?x=1");
+        }
+    }
+
     private EdgeFunctionExecutorProperties props(String dispatcherUrl) {
         EdgeFunctionExecutorProperties props = new EdgeFunctionExecutorProperties();
         props.getCloudflare().setAccountId("acct");
@@ -121,18 +164,103 @@ class CloudflareEdgeFunctionExecutorTest {
         return props;
     }
 
+    @Test
+    void deployFailsForUncompiledTypescriptEntrypoint() {
+        EdgeFunctionExecutorProperties props = props("http://127.0.0.1:1");
+        props.getCloudflare().setApiBaseUrl("http://127.0.0.1:9");
+        var executor = new CloudflareEdgeFunctionExecutor(props, new ObjectMapper());
+
+        var res = executor.deploy(deployRequest("app1", "hello", "index.ts",
+                bundle("index.ts", "export default { async fetch(req: Request) { return new Response('ok') } };")));
+
+        assertThat(res.status()).isEqualTo("failed");
+        assertThat(res.errorMessage()).contains("TYPESCRIPT_REQUIRES_BUNDLE");
+    }
+
+    @Test
+    void deployUsesCompiledSiblingForTypescriptEntrypoint() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(new MockResponse().setResponseCode(200).setBody("{\"success\":true}"));
+            server.start();
+            EdgeFunctionExecutorProperties props = props(server.url("/dispatch").toString());
+            props.getCloudflare().setApiBaseUrl(server.url("/client/v4").toString().replaceAll("/$", ""));
+            var executor = new CloudflareEdgeFunctionExecutor(props, new ObjectMapper());
+
+            var res = executor.deploy(deployRequest("app1", "hello", "index.ts",
+                    bundle("index.js", "export default { async fetch() { return new Response('compiled') } };")));
+
+            assertThat(res.status()).isEqualTo("deployed");
+            assertThat(server.takeRequest().getBody().readUtf8()).contains("compiled");
+        }
+    }
+
+    @Test
+    void deployHonorsCustomEntrypoint() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(new MockResponse().setResponseCode(200).setBody("{\"success\":true}"));
+            server.start();
+            EdgeFunctionExecutorProperties props = props(server.url("/dispatch").toString());
+            props.getCloudflare().setApiBaseUrl(server.url("/client/v4").toString().replaceAll("/$", ""));
+            var executor = new CloudflareEdgeFunctionExecutor(props, new ObjectMapper());
+
+            var res = executor.deploy(deployRequest("app1", "hello", "main.js",
+                    bundle("main.js", "export default { async fetch() { return new Response('main') } };")));
+
+            assertThat(res.status()).isEqualTo("deployed");
+        }
+    }
+
+    @Test
+    void deployFailsWhenEntrypointMissingFromBundle() {
+        EdgeFunctionExecutorProperties props = props("http://127.0.0.1:1");
+        props.getCloudflare().setApiBaseUrl("http://127.0.0.1:9");
+        var executor = new CloudflareEdgeFunctionExecutor(props, new ObjectMapper());
+
+        var res = executor.deploy(deployRequest("app1", "hello", "main.js",
+                bundle("other.js", "export default {};")));
+
+        assertThat(res.status()).isEqualTo("failed");
+        assertThat(res.errorMessage()).contains("must contain entrypoint main.js");
+    }
+
+    @Test
+    void syncSecretsPutsEachSecretToCloudflare() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(new MockResponse().setResponseCode(200).setBody("{\"success\":true}"));
+            server.start();
+            EdgeFunctionExecutorProperties props = props(server.url("/dispatch").toString());
+            props.getCloudflare().setApiBaseUrl(server.url("/client/v4").toString().replaceAll("/$", ""));
+            var executor = new CloudflareEdgeFunctionExecutor(props, new ObjectMapper());
+
+            executor.syncSecrets("app1", "hello", "nubase-app1-hello", Map.of("API_KEY", "v2"));
+
+            var request = server.takeRequest();
+            assertThat(request.getMethod()).isEqualTo("PUT");
+            assertThat(request.getPath())
+                    .isEqualTo("/client/v4/accounts/acct/workers/dispatch/namespaces/ns/scripts/nubase-app1-hello/secrets");
+            assertThat(request.getBody().readUtf8()).contains("\"API_KEY\"").contains("\"secret_text\"");
+        }
+    }
+
     private EdgeFunctionDeploymentRequest deployRequest(String projectRef, String slug) {
-        String payload = "{\"files\":[{\"path\":\"index.js\",\"content\":\""
-                + Base64.getEncoder().encodeToString("export default { async fetch() { return new Response('ok') } };".getBytes(StandardCharsets.UTF_8))
-                + "\"}]}";
+        return deployRequest(projectRef, slug, "index.js",
+                bundle("index.js", "export default { async fetch() { return new Response('ok') } };"));
+    }
+
+    private EdgeFunctionDeploymentRequest deployRequest(String projectRef, String slug, String entrypoint, String bundleBase64) {
         return new EdgeFunctionDeploymentRequest(
                 projectRef,
                 slug,
-                "hash",
-                null,
-                "source_bundle",
-                Base64.getEncoder().encodeToString(payload.getBytes(StandardCharsets.UTF_8)),
+                entrypoint,
+                bundleBase64,
                 Map.of("CUSTOM_SECRET", "value")
         );
+    }
+
+    private String bundle(String path, String source) {
+        String payload = "{\"files\":[{\"path\":\"" + path + "\",\"content\":\""
+                + Base64.getEncoder().encodeToString(source.getBytes(StandardCharsets.UTF_8))
+                + "\"}]}";
+        return Base64.getEncoder().encodeToString(payload.getBytes(StandardCharsets.UTF_8));
     }
 }

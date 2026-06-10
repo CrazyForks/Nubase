@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { BridgeConfig } from '../src/config.js';
-import { parseFunctionArgs, runFunctionsCommand } from '../src/functions.js';
+import { parseFunctionArgs, resolveExitCode, runFunctionsCommand } from '../src/functions.js';
 
 test('parseFunctionArgs separates positional and options', () => {
   const parsed = parseFunctionArgs(['hello', '--method', 'POST', '--privileged']);
@@ -71,6 +71,44 @@ test('functions deploy --bundle uploads a single bundled entrypoint', async () =
   assert.equal(payload.files[0].path, 'index.js');
   const source = Buffer.from(payload.files[0].content, 'base64').toString('utf8');
   assert.match(source, /bundled/);
+});
+
+test('functions deploy prunes node_modules and .git before walking', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'nubase-functions-'));
+  const cwd = process.cwd();
+  let uploadedBundle = '';
+  try {
+    process.chdir(dir);
+    await runFunctionsCommand(['new', 'hello'], config(), fakeClient());
+    const fnDir = path.join(dir, 'nubase/functions/hello');
+    await mkdir(path.join(fnDir, 'node_modules/some-dep'), { recursive: true });
+    await writeFile(path.join(fnDir, 'node_modules/some-dep/index.js'), 'module.exports = 1;\n');
+    // A broken symlink inside node_modules: a walk that descends and stats
+    // entries would throw ENOENT, so a passing deploy proves we pruned early.
+    await symlink(path.join(fnDir, 'node_modules/missing-target'), path.join(fnDir, 'node_modules/broken'));
+    await mkdir(path.join(fnDir, '.git'), { recursive: true });
+    await writeFile(path.join(fnDir, '.git/HEAD'), 'ref: refs/heads/main\n');
+    await writeFile(path.join(fnDir, 'helper.js'), 'export const ok = true;\n');
+    await runFunctionsCommand(['deploy', 'hello'], config(), fakeClient([], (bundle) => {
+      uploadedBundle = bundle;
+    }));
+  } finally {
+    process.chdir(cwd);
+    await rm(dir, { recursive: true, force: true });
+  }
+  const payload = JSON.parse(Buffer.from(uploadedBundle, 'base64').toString('utf8'));
+  const paths = payload.files.map((file: { path: string }) => file.path);
+  assert.deepEqual(paths.sort(), ['helper.js', 'index.js', 'nubase-function.json']);
+});
+
+test('resolveExitCode maps refusals to 1 and everything else to 0', () => {
+  assert.equal(resolveExitCode({ success: false, code: 'PERMISSION_GATE_OFF' }), 1);
+  assert.equal(resolveExitCode({ ok: true }), 0);
+  assert.equal(resolveExitCode({ success: true }), 0);
+  assert.equal(resolveExitCode([]), 0);
+  assert.equal(resolveExitCode(null), 0);
+  assert.equal(resolveExitCode(undefined), 0);
+  assert.equal(resolveExitCode({ usage: ['nubase_cli functions list'] }), 0);
 });
 
 test('functions secrets set parses KEY=value assignments', async () => {

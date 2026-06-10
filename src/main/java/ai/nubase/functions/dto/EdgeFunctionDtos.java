@@ -9,7 +9,6 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 import java.time.Instant;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -158,10 +157,8 @@ public final class EdgeFunctionDtos {
             String executorProvider,
             String errorCode,
             String errorMessage,
-            String callerType,
             String callerRole,
             UUID callerUserId,
-            UUID callerPlatformUserId,
             Instant createdAt
     ) {
         public static InvocationLogResponse from(EdgeFunctionInvocation invocation) {
@@ -178,15 +175,10 @@ public final class EdgeFunctionDtos {
                     invocation.getExecutorProvider(),
                     invocation.getErrorCode(),
                     invocation.getErrorMessage(),
-                    invocation.getCallerType(),
                     invocation.getCallerRole(),
                     invocation.getCallerUserId(),
-                    invocation.getCallerPlatformUserId(),
                     invocation.getCreatedAt()
             );
         }
-    }
-
-    public record ListResponse<T>(List<T> data) {
     }
 }

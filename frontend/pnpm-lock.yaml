@@ -158,10 +158,6 @@ importers:
   packages/config: {}
 
   packages/mcp-bridge:
-    dependencies:
-      esbuild:
-        specifier: 0.21.5
-        version: 0.21.5
     devDependencies:
       '@types/node':
         specifier: ^22.7.5
@@ -169,6 +165,10 @@ importers:
       typescript:
         specifier: ^5.5.4
         version: 5.9.3
+    optionalDependencies:
+      esbuild:
+        specifier: 0.21.5
+        version: 0.21.5
 
   packages/ui:
     dependencies:

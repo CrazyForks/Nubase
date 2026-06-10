@@ -29,6 +29,16 @@ export async function runFunctionsCommand(args: string[], config: BridgeConfig, 
   }
 }
 
+// CLI exit code for a functions command result: refusals and other explicit
+// failures (success === false, e.g. PERMISSION_GATE_OFF) exit 1 so scripts and
+// agents can detect them; everything else is success.
+export function resolveExitCode(result: unknown): number {
+  if (result && typeof result === 'object' && (result as Record<string, unknown>).success === false) {
+    return 1;
+  }
+  return 0;
+}
+
 export function parseFunctionArgs(args: string[]) {
   const out: Record<string, string | boolean> = {};
   const positional: string[] = [];
@@ -218,13 +228,16 @@ async function loadEsbuild(): Promise<{
 }
 
 async function listFiles(dir: string): Promise<string[]> {
-  const items = await readdir(dir);
+  const items = await readdir(dir, { withFileTypes: true });
   const out: string[] = [];
   for (const item of items) {
-    const full = path.join(dir, item);
-    const info = await stat(full);
-    if (info.isDirectory()) out.push(...await listFiles(full));
-    else if (info.isFile()) out.push(full);
+    if (item.isDirectory()) {
+      // Prune dependency/VCS trees before recursing — never walk into them.
+      if (item.name === 'node_modules' || item.name === '.git') continue;
+      out.push(...await listFiles(path.join(dir, item.name)));
+    } else if (item.isFile()) {
+      out.push(path.join(dir, item.name));
+    }
   }
   return out;
 }

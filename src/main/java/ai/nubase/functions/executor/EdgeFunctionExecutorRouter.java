@@ -32,6 +32,16 @@ public class EdgeFunctionExecutorRouter implements EdgeFunctionExecutor {
         return delegate().invoke(request);
     }
 
+    @Override
+    public boolean injectsEnvAtInvoke() {
+        return delegate().injectsEnvAtInvoke();
+    }
+
+    @Override
+    public void syncSecrets(String projectRef, String functionSlug, String providerDeploymentId, java.util.Map<String, String> env) {
+        delegate().syncSecrets(projectRef, functionSlug, providerDeploymentId, env);
+    }
+
     private EdgeFunctionExecutor delegate() {
         if ("cloudflare".equalsIgnoreCase(properties.getProvider())) {
             return cloudflareExecutor;

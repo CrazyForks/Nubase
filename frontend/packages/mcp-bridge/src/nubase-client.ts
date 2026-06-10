@@ -270,10 +270,14 @@ export class NubaseClient {
     const slug = requiredString(args.slug, 'slug');
     const method = typeof args.method === 'string' ? args.method.toUpperCase() : 'GET';
     const path = typeof args.path === 'string' && args.path ? `/${args.path.replace(/^\/+/, '')}` : '';
+    // Return the {status, headers, data} envelope for ANY status code — the
+    // gateway forwards the function's own 4xx/5xx, which is a valid result for
+    // the caller to inspect. Only network-level failures throw.
     return this.rawRequest(`/functions/v1/${encodeURIComponent(slug)}${path}`, {
       method,
       body: typeof args.body === 'string' ? args.body : undefined,
       contentType: typeof args.contentType === 'string' ? args.contentType : 'application/json',
+      throwOnError: false,
     });
   }
 
@@ -428,7 +432,10 @@ values (${sqlLiteral(entry.risk)}, ${entry.statementCount}, ${sqlLiteral(entry.s
     return data;
   }
 
-  private async rawRequest(path: string, options: { method?: string; body?: string; contentType?: string } = {}) {
+  private async rawRequest(
+    path: string,
+    options: { method?: string; body?: string; contentType?: string; throwOnError?: boolean } = {}
+  ) {
     if (!this.config.projectKey) {
       throw new Error('Missing NUBASE_PROJECT_KEY or NUBASE_API_KEY.');
     }
@@ -446,7 +453,7 @@ values (${sqlLiteral(entry.risk)}, ${entry.statementCount}, ${sqlLiteral(entry.s
     });
     const text = await response.text();
     const data = parseResponse(text);
-    if (!response.ok) {
+    if (!response.ok && options.throwOnError !== false) {
       throw new Error(typeof data === 'string' ? data : JSON.stringify(data));
     }
     return { status: response.status, headers: Object.fromEntries(response.headers.entries()), data };

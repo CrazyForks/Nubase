@@ -1,37 +1,73 @@
 export default {
   async fetch(request, env) {
-    const url = new URL(request.url);
-    const parts = url.pathname.split('/').filter(Boolean);
-    const projectRef = request.headers.get('x-nubase-project-ref') || parts[0];
-    const functionSlug = request.headers.get('x-nubase-function-slug') || parts[1];
+    const projectRef = request.headers.get('x-nubase-project-ref');
+    const functionSlug = request.headers.get('x-nubase-function-slug');
     const deploymentId = request.headers.get('x-nubase-deployment-id');
 
     if (!projectRef || !functionSlug || !deploymentId) {
       return json({ error: 'missing_function_context' }, 400);
     }
 
-    const signatureOk = await verifySignature(request, env);
+    const url = new URL(request.url);
+    const suffix = pathSuffix(url.pathname, projectRef, functionSlug);
+    if (suffix === null) {
+      return json({ error: 'path_mismatch' }, 400);
+    }
+
+    const signatureOk = await verifySignature(request, env, {
+      projectRef,
+      functionSlug,
+      deploymentId,
+      path: suffix,
+      search: url.search,
+    });
     if (!signatureOk) {
       return json({ error: 'invalid_signature' }, 401);
     }
 
-    const target = env.NUBASE_DISPATCH.get(deploymentId);
-    const suffix = '/' + parts.slice(2).join('/');
-    const targetUrl = new URL(request.url);
-    targetUrl.pathname = suffix === '/' ? '/' : suffix;
+    let target;
+    try {
+      target = env.NUBASE_DISPATCH.get(deploymentId);
+    } catch (e) {
+      return json({ error: 'function_not_deployed' }, 404);
+    }
 
+    const targetUrl = new URL(request.url);
+    targetUrl.pathname = suffix === '' ? '/' : suffix;
     const forwarded = new Request(targetUrl.toString(), request);
+    // Tenant code must never see the dispatcher signature: anything able to read it
+    // could replay the request against another worker within the timestamp window.
+    forwarded.headers.delete('x-nubase-signature');
+    forwarded.headers.delete('x-nubase-timestamp');
+    forwarded.headers.delete('x-nubase-deployment-id');
     return target.fetch(forwarded);
   },
 };
 
-async function verifySignature(request, env) {
+// Locates "/<projectRef>/<functionSlug>" in the raw request path (the dispatcher may
+// be mounted under a base path) and returns the raw suffix after it ('' when absent).
+// Returns null when the path does not contain the signed project/function segments.
+function pathSuffix(pathname, projectRef, functionSlug) {
+  const marker = `/${projectRef}/${functionSlug}`;
+  let from = 0;
+  while (true) {
+    const idx = pathname.indexOf(marker, from);
+    if (idx === -1) return null;
+    const end = idx + marker.length;
+    if (end === pathname.length) return '';
+    if (pathname[end] === '/') return pathname.slice(end);
+    from = idx + 1;
+  }
+}
+
+// Signed payload lines (must match CloudflareEdgeFunctionExecutor.sign):
+// requestId, projectRef, functionSlug, deploymentId, METHOD, rawPathSuffix,
+// rawQuery, timestamp, sha256Hex(body)
+async function verifySignature(request, env, ctx) {
   const secret = env.NUBASE_DISPATCHER_SECRET;
   const signature = request.headers.get('x-nubase-signature');
   const timestamp = request.headers.get('x-nubase-timestamp');
   const requestId = request.headers.get('x-nubase-request-id') || '';
-  const projectRef = request.headers.get('x-nubase-project-ref') || '';
-  const functionSlug = request.headers.get('x-nubase-function-slug') || '';
 
   if (!secret || !signature || !timestamp) return false;
 
@@ -40,14 +76,14 @@ async function verifySignature(request, env) {
 
   const body = await request.clone().arrayBuffer();
   const hash = await sha256Hex(body);
-  const url = new URL(request.url);
   const payload = [
     requestId,
-    projectRef,
-    functionSlug,
+    ctx.projectRef,
+    ctx.functionSlug,
+    ctx.deploymentId,
     request.method.toUpperCase(),
-    url.pathname.replace(/^\/[^/]+\/[^/]+/, '') || '',
-    url.search ? url.search.slice(1) : '',
+    ctx.path,
+    ctx.search ? ctx.search.slice(1) : '',
     timestamp,
     hash,
   ].join('\n');

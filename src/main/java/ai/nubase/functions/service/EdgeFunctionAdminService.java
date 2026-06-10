@@ -26,10 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.Instant;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.UUID;
 
 import static ai.nubase.functions.service.EdgeFunctionExceptions.EdgeFunctionException;
 
@@ -43,6 +40,7 @@ public class EdgeFunctionAdminService {
     private final EdgeFunctionInvocationRepository invocationRepository;
     private final EdgeFunctionExecutorRouter executor;
     private final EncryptionService encryptionService;
+    private final EdgeFunctionSecretEnv secretEnv;
 
     @Transactional(transactionManager = "metadataTransactionManager", readOnly = true)
     public List<EdgeFunction> listFunctions() {
@@ -55,7 +53,7 @@ public class EdgeFunctionAdminService {
     }
 
     @Transactional("metadataTransactionManager")
-    public EdgeFunction createFunction(CreateFunctionRequest request, UUID platformUserId) {
+    public EdgeFunction createFunction(CreateFunctionRequest request) {
         String projectRef = projectRef();
         String slug = EdgeFunctionNames.normalizeSlug(
                 StringUtils.hasText(request.slug()) ? request.slug() : request.name()
@@ -73,14 +71,12 @@ public class EdgeFunctionAdminService {
                 .privileged(request.privileged())
                 .importMap(request.importMap())
                 .entrypoint(StringUtils.hasText(request.entrypoint()) ? request.entrypoint().trim() : "index.ts")
-                .createdByPlatformUserId(platformUserId)
-                .updatedByPlatformUserId(platformUserId)
                 .build();
         return functionRepository.save(fn);
     }
 
     @Transactional("metadataTransactionManager")
-    public EdgeFunction updateFunction(String slug, UpdateFunctionRequest request, UUID platformUserId) {
+    public EdgeFunction updateFunction(String slug, UpdateFunctionRequest request) {
         EdgeFunction fn = findFunction(slug);
         if (StringUtils.hasText(request.name())) fn.setName(request.name().trim());
         if (request.description() != null) fn.setDescription(request.description());
@@ -89,12 +85,11 @@ public class EdgeFunctionAdminService {
         if (request.privileged() != null) fn.setPrivileged(request.privileged());
         if (request.importMap() != null) fn.setImportMap(request.importMap());
         if (StringUtils.hasText(request.entrypoint())) fn.setEntrypoint(request.entrypoint().trim());
-        fn.setUpdatedByPlatformUserId(platformUserId);
         return functionRepository.save(fn);
     }
 
     @Transactional("metadataTransactionManager")
-    public EdgeFunctionVersion deploy(String slug, DeployFunctionRequest request, UUID platformUserId) {
+    public EdgeFunctionVersion deploy(String slug, DeployFunctionRequest request) {
         EdgeFunction fn = findFunction(slug);
         int nextVersion = versionRepository.findFirstByFunctionOrderByVersionNoDesc(fn)
                 .map(version -> version.getVersionNo() + 1)
@@ -102,11 +97,9 @@ public class EdgeFunctionAdminService {
         EdgeFunctionDeploymentResponse deployment = executor.deploy(new EdgeFunctionDeploymentRequest(
                 fn.getProjectRef(),
                 fn.getSlug(),
-                request.sourceHash(),
-                request.artifactUri(),
-                StringUtils.hasText(request.artifactType()) ? request.artifactType() : "source_bundle",
+                fn.getEntrypoint(),
                 request.sourceBundleBase64(),
-                functionEnv(fn)
+                secretEnv.decryptedEnv(fn)
         ));
         EdgeFunctionVersion version = EdgeFunctionVersion.builder()
                 .function(fn)
@@ -118,7 +111,6 @@ public class EdgeFunctionAdminService {
                 .providerDeploymentId(deployment.providerDeploymentId())
                 .status(deployment.status())
                 .errorMessage(deployment.errorMessage())
-                .deployedByPlatformUserId(platformUserId)
                 .activatedAt("deployed".equals(deployment.status()) ? Instant.now() : null)
                 .build();
         EdgeFunctionVersion saved = versionRepository.save(version);
@@ -140,7 +132,7 @@ public class EdgeFunctionAdminService {
     }
 
     @Transactional("metadataTransactionManager")
-    public List<EdgeFunctionSecret> setSecrets(String slug, SetFunctionSecretsRequest request, UUID platformUserId) {
+    public List<EdgeFunctionSecret> setSecrets(String slug, SetFunctionSecretsRequest request) {
         EdgeFunction fn = findFunction(slug);
         if (request.secrets() == null || request.secrets().isEmpty()) {
             return secretRepository.findByFunctionOrderByNameAsc(fn);
@@ -155,9 +147,7 @@ public class EdgeFunctionAdminService {
                     .orElseGet(() -> EdgeFunctionSecret.builder()
                             .function(fn)
                             .name(name)
-                            .createdByPlatformUserId(platformUserId)
                             .build());
-            secret.setUpdatedByPlatformUserId(platformUserId);
             try {
                 secret.setEncryptedValue(encryptionService.encrypt(value));
             } catch (Exception e) {
@@ -165,7 +155,26 @@ public class EdgeFunctionAdminService {
             }
             secretRepository.save(secret);
         }
+        syncSecretsToActiveDeployment(fn);
         return secretRepository.findByFunctionOrderByNameAsc(fn);
+    }
+
+    // Deploy-time-bound executors (Cloudflare) would otherwise keep serving stale
+    // secrets until the next manual deploy. Failure rolls the secret writes back so
+    // storage and the deployment never disagree silently.
+    private void syncSecretsToActiveDeployment(EdgeFunction fn) {
+        EdgeFunctionVersion active = fn.getActiveVersion();
+        if (active == null || !"deployed".equals(active.getStatus())) {
+            return;
+        }
+        try {
+            executor.syncSecrets(fn.getProjectRef(), fn.getSlug(), active.getProviderDeploymentId(), secretEnv.decryptedEnv(fn));
+        } catch (EdgeFunctionException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new EdgeFunctionException(HttpStatus.BAD_GATEWAY, "SECRET_SYNC_FAILED",
+                    "Secrets could not be applied to the deployed function: " + e.getMessage());
+        }
     }
 
     @Transactional(transactionManager = "metadataTransactionManager", readOnly = true)
@@ -194,18 +203,6 @@ public class EdgeFunctionAdminService {
     private EdgeFunction findFunction(String slug) {
         return functionRepository.findByProjectRefAndSlug(projectRef(), EdgeFunctionNames.normalizeSlug(slug))
                 .orElseThrow(() -> new EdgeFunctionException(HttpStatus.NOT_FOUND, "FUNCTION_NOT_FOUND", "Function not found"));
-    }
-
-    private Map<String, String> functionEnv(EdgeFunction fn) {
-        Map<String, String> env = new LinkedHashMap<>();
-        for (EdgeFunctionSecret secret : secretRepository.findByFunctionOrderByNameAsc(fn)) {
-            try {
-                env.put(secret.getName(), encryptionService.decrypt(secret.getEncryptedValue()));
-            } catch (Exception e) {
-                throw new EdgeFunctionException(HttpStatus.INTERNAL_SERVER_ERROR, "SECRET_DECRYPTION_FAILED", "Failed to decrypt function secret");
-            }
-        }
-        return env;
     }
 
     private String projectRef() {

@@ -41,6 +41,10 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class CloudflareEdgeFunctionExecutor implements EdgeFunctionExecutor {
 
+    // Bound as plain_text at deploy time; user secrets must not collide with them.
+    private static final java.util.Set<String> RESERVED_ENV_NAMES =
+            java.util.Set.of("NUBASE_PROJECT_REF", "NUBASE_FUNCTION_NAME");
+
     private final EdgeFunctionExecutorProperties properties;
     private final ObjectMapper objectMapper;
     private volatile OkHttpClient client;
@@ -133,10 +137,40 @@ public class CloudflareEdgeFunctionExecutor implements EdgeFunctionExecutor {
         }
     }
 
+    @Override
+    public void syncSecrets(String projectRef, String functionSlug, String providerDeploymentId, Map<String, String> env) {
+        validateConfigForDeploy();
+        if (!StringUtils.hasText(providerDeploymentId) || env == null || env.isEmpty()) return;
+        String url = properties.getCloudflare().getApiBaseUrl()
+                + "/accounts/" + properties.getCloudflare().getAccountId()
+                + "/workers/dispatch/namespaces/" + properties.getCloudflare().getDispatchNamespace()
+                + "/scripts/" + providerDeploymentId + "/secrets";
+        for (Map.Entry<String, String> entry : env.entrySet()) {
+            if (RESERVED_ENV_NAMES.contains(entry.getKey())) continue;
+            try {
+                String payload = objectMapper.writeValueAsString(Map.of(
+                        "name", entry.getKey(),
+                        "text", entry.getValue(),
+                        "type", "secret_text"
+                ));
+                Request request = new Request.Builder()
+                        .url(url)
+                        .put(RequestBody.create(payload, MediaType.parse("application/json")))
+                        .header("Authorization", "Bearer " + properties.getCloudflare().getApiToken())
+                        .build();
+                try (Response response = httpClient().newCall(request).execute()) {
+                    assertCloudflareSuccess(response);
+                }
+            } catch (IOException e) {
+                throw new IllegalStateException("Failed to apply secret " + entry.getKey() + " to Cloudflare deployment: " + e.getMessage(), e);
+            }
+        }
+    }
+
     private void uploadWorkerScript(EdgeFunctionDeploymentRequest request, String deploymentId) throws Exception {
         SourceBundle bundle = decodeSourceBundle(request.sourceBundleBase64());
-        String entrypoint = loadEntrypoint(bundle);
-        String workerModule = buildWorkerModule(request, transpileEntrypoint(entrypoint));
+        String entrypoint = loadEntrypoint(bundle, request.entrypoint());
+        String workerModule = buildWorkerModule(request, entrypoint);
         String metadata = objectMapper.writeValueAsString(Map.of(
                 "main_module", "index.js",
                 "compatibility_date", "2026-06-01",
@@ -190,7 +224,8 @@ public class CloudflareEdgeFunctionExecutor implements EdgeFunctionExecutor {
         bindings.add(Map.of("type", "plain_text", "name", "NUBASE_FUNCTION_NAME", "text", request.functionSlug()));
         if (request.env() != null) {
             request.env().forEach((name, value) -> {
-                if (StringUtils.hasText(name) && value != null) {
+                // Cloudflare rejects duplicate binding names, so a secret cannot shadow a built-in.
+                if (StringUtils.hasText(name) && value != null && !RESERVED_ENV_NAMES.contains(name)) {
                     bindings.add(Map.of("type", "secret_text", "name", name, "text", value));
                 }
             });
@@ -224,33 +259,52 @@ public class CloudflareEdgeFunctionExecutor implements EdgeFunctionExecutor {
         return bundle;
     }
 
-    private String loadEntrypoint(SourceBundle bundle) throws IOException {
+    // Resolves the function's configured entrypoint inside the bundle. TypeScript is
+    // not compiled server-side (the upload API only accepts JavaScript modules), so a
+    // .ts entrypoint is accepted only when the bundle carries its compiled .js sibling
+    // (the CLI bundles TypeScript with esbuild by default).
+    private String loadEntrypoint(SourceBundle bundle, String entrypoint) throws IOException {
+        String wanted = StringUtils.hasText(entrypoint) ? entrypoint.trim() : "index.ts";
+        String compiledSibling = wanted.toLowerCase(Locale.ROOT).endsWith(".ts")
+                ? wanted.substring(0, wanted.length() - 3) + ".js"
+                : null;
+        SourceBundleFile exact = null;
+        SourceBundleFile compiled = null;
         for (SourceBundleFile file : bundle.files()) {
-            if ("index.ts".equals(file.path()) || "index.js".equals(file.path())) {
-                return new String(Base64.getDecoder().decode(file.content()), StandardCharsets.UTF_8);
-            }
+            if (wanted.equals(file.path())) exact = file;
+            if (compiledSibling != null && compiledSibling.equals(file.path())) compiled = file;
         }
-        throw new IOException("Source bundle must contain index.ts or index.js");
+        if (compiled != null) {
+            return decodeFile(compiled);
+        }
+        if (exact == null) {
+            throw new IOException("Source bundle must contain entrypoint " + wanted
+                    + (compiledSibling == null ? "" : " or its compiled form " + compiledSibling));
+        }
+        if (wanted.toLowerCase(Locale.ROOT).endsWith(".ts")) {
+            throw new IOException("TYPESCRIPT_REQUIRES_BUNDLE: TypeScript entrypoints must be compiled to JavaScript "
+                    + "before deployment (the nubase_cli bundles them automatically; otherwise upload " + compiledSibling + ")");
+        }
+        return decodeFile(exact);
+    }
+
+    private String decodeFile(SourceBundleFile file) {
+        return new String(Base64.getDecoder().decode(file.content()), StandardCharsets.UTF_8);
     }
 
     private String buildWorkerModule(EdgeFunctionDeploymentRequest request, String entrypoint) {
         return """
-                const __module = {};
-                const __exports = {};
                 const __envDefaults = {
                   NUBASE_PROJECT_REF: %s,
                   NUBASE_FUNCTION_NAME: %s
                 };
                 %s
-                const userDefault = typeof __exports.default !== "undefined" ? __exports.default : (typeof exports !== "undefined" ? exports.default : undefined);
+                const __userDefault = globalThis.default;
                 export default {
                   async fetch(request, env, ctx) {
                     const mergedEnv = Object.assign({}, __envDefaults, env || {});
-                    if (globalThis.default && typeof globalThis.default.fetch === "function") {
-                      return globalThis.default.fetch(request, mergedEnv, ctx);
-                    }
-                    if (userDefault && typeof userDefault.fetch === "function") {
-                      return userDefault.fetch(request, mergedEnv, ctx);
+                    if (__userDefault && typeof __userDefault.fetch === "function") {
+                      return __userDefault.fetch(request, mergedEnv, ctx);
                     }
                     return new Response("Nubase function must export default.fetch", { status: 500 });
                   }
@@ -266,16 +320,6 @@ public class CloudflareEdgeFunctionExecutor implements EdgeFunctionExecutor {
         return source
                 .replaceFirst("export\\s+default\\s+", "globalThis.default = ")
                 .replaceFirst("export\\s+\\{\\s*default\\s*\\}\\s*;", "");
-    }
-
-    private String transpileEntrypoint(String source) {
-        // This is intentionally narrow. The Cloudflare upload API accepts JavaScript modules;
-        // Wrangler normally compiles TypeScript, but Nubase uploads directly. Support the
-        // scaffold's common annotations without pretending to be a full TS compiler.
-        return source
-                .replace(": Request", "")
-                .replace(": Record<string, string>", "")
-                .replace(": Record<string,string>", "");
     }
 
     private String jsonString(String value) {
@@ -315,12 +359,17 @@ public class CloudflareEdgeFunctionExecutor implements EdgeFunctionExecutor {
         return RequestBody.create(body, mediaType);
     }
 
+    // Signed payload lines (must match worker.js verifySignature): requestId, projectRef,
+    // functionSlug, deploymentId, METHOD, rawPathSuffix, rawQuery, timestamp, sha256Hex(body).
+    // deploymentId is included so the routing header cannot be swapped to another
+    // tenant's worker without invalidating the signature.
     private String sign(EdgeFunctionInvocationRequest request, byte[] body, String timestamp) {
         try {
             String bodyHash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(body));
             String payload = request.requestId() + "\n"
                     + request.projectRef() + "\n"
                     + request.functionSlug() + "\n"
+                    + request.providerDeploymentId() + "\n"
                     + request.method().toUpperCase(Locale.ROOT) + "\n"
                     + (request.path() == null ? "" : request.path()) + "\n"
                     + (request.queryString() == null ? "" : request.queryString()) + "\n"

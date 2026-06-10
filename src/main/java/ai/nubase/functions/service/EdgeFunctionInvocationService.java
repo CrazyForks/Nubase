@@ -9,33 +9,40 @@ import ai.nubase.functions.util.EdgeFunctionNames;
 import ai.nubase.metadata.edge.entity.EdgeFunction;
 import ai.nubase.metadata.edge.entity.EdgeFunctionInvocation;
 import ai.nubase.metadata.edge.entity.EdgeFunctionVersion;
-import ai.nubase.metadata.edge.repository.EdgeFunctionInvocationRepository;
 import ai.nubase.metadata.edge.repository.EdgeFunctionRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 
 import static ai.nubase.functions.service.EdgeFunctionExceptions.EdgeFunctionException;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class EdgeFunctionInvocationService {
 
     private final EdgeFunctionRepository functionRepository;
-    private final EdgeFunctionInvocationRepository invocationRepository;
+    private final EdgeFunctionInvocationLogWriter logWriter;
     private final EdgeFunctionExecutorRouter executor;
     private final HeaderSanitizer headerSanitizer;
     private final EdgeFunctionRateLimiter rateLimiter;
+    private final EdgeFunctionSecretEnv secretEnv;
 
-    @Transactional("metadataTransactionManager")
+    // Deliberately NOT @Transactional: executor.invoke() is a remote HTTP call that can
+    // run up to the executor timeout, and holding a metadata-pool connection across it
+    // would let a handful of slow functions starve the whole control plane. The lookups
+    // run in the repositories' own short transactions and the invocation log is written
+    // by EdgeFunctionInvocationLogWriter in a separate transaction so it also survives
+    // the EdgeFunctionException rethrow below.
     public EdgeFunctionInvocationResponse invoke(
             String functionSlug,
             String path,
@@ -46,7 +53,6 @@ public class EdgeFunctionInvocationService {
         String requestId = requestId(servletRequest);
         String projectRef = projectRef();
         String slug = EdgeFunctionNames.normalizeSlug(functionSlug);
-        EdgeFunction function = null;
         EdgeFunctionVersion version = null;
         Integer status = null;
         String errorCode = null;
@@ -54,7 +60,7 @@ public class EdgeFunctionInvocationService {
 
         try {
             rateLimiter.check(projectRef, slug);
-            function = functionRepository.findByProjectRefAndSlug(projectRef, slug)
+            EdgeFunction function = functionRepository.findByProjectRefAndSlug(projectRef, slug)
                     .orElseThrow(() -> new EdgeFunctionException(HttpStatus.NOT_FOUND, "FUNCTION_NOT_FOUND", "Function not found"));
             if (!Boolean.TRUE.equals(function.getEnabled())) {
                 throw new EdgeFunctionException(HttpStatus.NOT_FOUND, "FUNCTION_NOT_FOUND", "Function not found");
@@ -77,7 +83,7 @@ public class EdgeFunctionInvocationService {
                     servletRequest.getQueryString(),
                     headerSanitizer.forwardableHeaders(servletRequest),
                     body == null ? new byte[0] : body,
-                    defaultEnv(function)
+                    invocationEnv(function)
             ));
             status = response.statusCode();
             errorCode = response.errorCode();
@@ -90,43 +96,45 @@ public class EdgeFunctionInvocationService {
             throw e;
         } finally {
             int durationMs = (int) Math.min(Integer.MAX_VALUE, (System.nanoTime() - start) / 1_000_000);
-            invocationRepository.save(EdgeFunctionInvocation.builder()
-                    .requestId(requestId)
-                    .projectRef(projectRef)
-                    .functionSlug(slug)
-                    .functionVersion(version)
-                    .method(servletRequest.getMethod())
-                    .path(path == null ? "" : path)
-                    .statusCode(status)
-                    .durationMs(durationMs)
-                    .executorProvider(executor.provider())
-                    .errorCode(errorCode)
-                    .errorMessage(truncate(errorMessage, 1000))
-                    .callerType(callerType())
-                    .callerRole(MultiTenancyContext.isServiceRole() ? "service_role" : (isAuthenticatedUser() ? "authenticated" : "anon"))
-                    .callerUserId(currentUserId())
-                    .build());
+            try {
+                logWriter.write(EdgeFunctionInvocation.builder()
+                        .requestId(requestId)
+                        .projectRef(projectRef)
+                        .functionSlug(slug)
+                        .functionVersion(version)
+                        .method(servletRequest.getMethod())
+                        .path(path == null ? "" : path)
+                        .statusCode(status)
+                        .durationMs(durationMs)
+                        .executorProvider(executor.provider())
+                        .errorCode(errorCode)
+                        .errorMessage(truncate(errorMessage, 1000))
+                        .callerRole(MultiTenancyContext.isServiceRole() ? "service_role" : (isAuthenticatedUser() ? "authenticated" : "anon"))
+                        .callerUserId(currentUserId())
+                        .build());
+            } catch (Exception e) {
+                log.warn("Failed to record edge function invocation log: requestId={}, error={}", requestId, e.toString());
+            }
         }
     }
 
-    private Map<String, String> defaultEnv(EdgeFunction function) {
-        // Do not add service_role by default. Privileged env will be introduced behind
-        // an explicit token/scoping design.
-        return Map.of(
-                "NUBASE_PROJECT_REF", function.getProjectRef(),
-                "NUBASE_FUNCTION_NAME", function.getSlug()
-        );
+    private Map<String, String> invocationEnv(EdgeFunction function) {
+        Map<String, String> env = new LinkedHashMap<>();
+        if (executor.injectsEnvAtInvoke()) {
+            // Executors that bind secrets at deploy time (Cloudflare) never need them
+            // here; only invoke-time executors (local) pay for the decryption.
+            env.putAll(secretEnv.decryptedEnv(function));
+        }
+        // Built-ins last so a secret cannot shadow them. Do not add service_role by
+        // default: privileged env will be introduced behind an explicit scoping design.
+        env.put("NUBASE_PROJECT_REF", function.getProjectRef());
+        env.put("NUBASE_FUNCTION_NAME", function.getSlug());
+        return env;
     }
 
     private boolean isAuthenticatedUser() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         return auth != null && auth.isAuthenticated() && auth.getPrincipal() instanceof User;
-    }
-
-    private String callerType() {
-        if (MultiTenancyContext.isServiceRole()) return "service_role";
-        if (isAuthenticatedUser()) return "auth_user";
-        return "anon";
     }
 
     private UUID currentUserId() {
