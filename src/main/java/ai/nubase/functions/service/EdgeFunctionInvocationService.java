@@ -1,6 +1,5 @@
 package ai.nubase.functions.service;
 
-import ai.nubase.auth.entity.User;
 import ai.nubase.common.context.MultiTenancyContext;
 import ai.nubase.functions.executor.EdgeFunctionExecutorRouter;
 import ai.nubase.functions.executor.EdgeFunctionInvocationRequest;
@@ -10,19 +9,15 @@ import ai.nubase.metadata.edge.entity.EdgeFunction;
 import ai.nubase.metadata.edge.entity.EdgeFunctionInvocation;
 import ai.nubase.metadata.edge.entity.EdgeFunctionVersion;
 import ai.nubase.metadata.edge.repository.EdgeFunctionRepository;
-import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.UUID;
 
 import static ai.nubase.functions.service.EdgeFunctionExceptions.EdgeFunctionException;
 
@@ -35,7 +30,6 @@ public class EdgeFunctionInvocationService {
     private final EdgeFunctionRepository functionRepository;
     private final EdgeFunctionInvocationLogWriter logWriter;
     private final EdgeFunctionExecutorRouter executor;
-    private final HeaderSanitizer headerSanitizer;
     private final EdgeFunctionRateLimiter rateLimiter;
     private final EdgeFunctionSecretEnv secretEnv;
 
@@ -45,14 +39,8 @@ public class EdgeFunctionInvocationService {
     // run in the repositories' own short transactions and the invocation log is written
     // by EdgeFunctionInvocationLogWriter in a separate transaction so it also survives
     // the EdgeFunctionException rethrow below.
-    public EdgeFunctionInvocationResponse invoke(
-            String functionSlug,
-            String path,
-            byte[] body,
-            HttpServletRequest servletRequest
-    ) {
+    public EdgeFunctionInvocationResponse invoke(String functionSlug, EdgeFunctionInvocationCommand command) {
         long start = System.nanoTime();
-        String requestId = requestId(servletRequest);
         String projectRef = projectRef();
         String slug = EdgeFunctionNames.normalizeSlug(functionSlug);
         EdgeFunctionVersion version = null;
@@ -67,7 +55,8 @@ public class EdgeFunctionInvocationService {
             if (!Boolean.TRUE.equals(function.getEnabled())) {
                 throw new EdgeFunctionException(HttpStatus.NOT_FOUND, "FUNCTION_NOT_FOUND", "Function not found");
             }
-            if (Boolean.TRUE.equals(function.getVerifyJwt()) && !isAuthenticatedUser() && !MultiTenancyContext.isServiceRole()) {
+            if (Boolean.TRUE.equals(function.getVerifyJwt())
+                    && EdgeFunctionInvocationCommand.ROLE_ANON.equals(command.callerRole())) {
                 throw new EdgeFunctionException(HttpStatus.UNAUTHORIZED, "JWT_REQUIRED", "Function requires a valid user JWT");
             }
             version = function.getActiveVersion();
@@ -76,15 +65,15 @@ public class EdgeFunctionInvocationService {
             }
 
             EdgeFunctionInvocationResponse response = executor.invoke(new EdgeFunctionInvocationRequest(
-                    requestId,
+                    command.requestId(),
                     projectRef,
                     slug,
                     version.getProviderDeploymentId(),
-                    servletRequest.getMethod(),
-                    path,
-                    servletRequest.getQueryString(),
-                    headerSanitizer.forwardableHeaders(servletRequest),
-                    body == null ? new byte[0] : body,
+                    command.method(),
+                    command.path(),
+                    command.queryString(),
+                    command.headers(),
+                    command.body() == null ? new byte[0] : command.body(),
                     invocationEnv(function)
             ));
             status = response.statusCode();
@@ -100,22 +89,23 @@ public class EdgeFunctionInvocationService {
             int durationMs = (int) Math.min(Integer.MAX_VALUE, (System.nanoTime() - start) / 1_000_000);
             try {
                 logWriter.write(EdgeFunctionInvocation.builder()
-                        .requestId(requestId)
+                        .requestId(command.requestId())
                         .projectRef(projectRef)
                         .functionSlug(slug)
                         .functionVersion(version)
-                        .method(servletRequest.getMethod())
-                        .path(path == null ? "" : path)
+                        .method(command.method())
+                        .path(command.path() == null ? "" : command.path())
                         .statusCode(status)
                         .durationMs(durationMs)
                         .executorProvider(executor.provider())
                         .errorCode(errorCode)
                         .errorMessage(truncate(errorMessage, 1000))
-                        .callerRole(MultiTenancyContext.isServiceRole() ? "service_role" : (isAuthenticatedUser() ? "authenticated" : "anon"))
-                        .callerUserId(currentUserId())
+                        .callerRole(command.callerRole())
+                        .callerUserId(command.callerUserId())
                         .build());
             } catch (Exception e) {
-                log.warn("Failed to record edge function invocation log: requestId={}, error={}", requestId, e.toString());
+                log.warn("Failed to record edge function invocation log: requestId={}, error={}",
+                        command.requestId(), e.toString());
             }
         }
     }
@@ -132,24 +122,6 @@ public class EdgeFunctionInvocationService {
         env.put("NUBASE_PROJECT_REF", function.getProjectRef());
         env.put("NUBASE_FUNCTION_NAME", function.getSlug());
         return env;
-    }
-
-    private boolean isAuthenticatedUser() {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        return auth != null && auth.isAuthenticated() && auth.getPrincipal() instanceof User;
-    }
-
-    private UUID currentUserId() {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth != null && auth.getPrincipal() instanceof User user && user.getId() != null) {
-            return user.getId();
-        }
-        return null;
-    }
-
-    private String requestId(HttpServletRequest request) {
-        String requestId = request.getHeader("x-request-id");
-        return StringUtils.hasText(requestId) ? requestId : UUID.randomUUID().toString();
     }
 
     private String projectRef() {

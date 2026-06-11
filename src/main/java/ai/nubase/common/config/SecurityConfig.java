@@ -64,6 +64,8 @@ public class SecurityConfig {
                         .requestMatchers("/ai-gateway/**").permitAll()
                         // Edge Functions (tenant resolved by UnifiedMultiTenancyFilter; admin endpoints use @RequireServiceRole)
                         .requestMatchers("/functions/v1/**", "/functions/admin/v1/**").permitAll()
+                        // Scheduled jobs control plane (tenant resolved by UnifiedMultiTenancyFilter; @RequireServiceRole enforces role)
+                        .requestMatchers("/cron/admin/v1/**").permitAll()
                         // Memory service endpoints — authentication flow:
                         //   1. UnifiedMultiTenancyFilter validates the apikey and sets MultiTenancyContext
                         //   2. authenticateUser validates the Bearer token and writes to SecurityContextHolder

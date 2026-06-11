@@ -240,6 +240,19 @@ nubase:
         dispatcher-url: ${NUBASE_FUNCTIONS_CLOUDFLARE_DISPATCHER_URL:}
         dispatcher-secret: ${NUBASE_FUNCTIONS_CLOUDFLARE_DISPATCHER_SECRET:}
 
+  # Scheduled jobs (Supabase-Cron-style). The control plane claims due jobs with a
+  # row-level compare-and-set, so any number of instances can run concurrently.
+  # Targets: edge_function (via the functions gateway path) and db_function (a named
+  # Postgres function in the tenant schema, with a per-job statement timeout).
+  cron:
+    enabled: ${NUBASE_CRON_ENABLED:true}
+    tick-ms: ${NUBASE_CRON_TICK_MS:30000}
+    max-jobs-per-tick: ${NUBASE_CRON_MAX_JOBS_PER_TICK:50}
+    default-timeout-seconds: ${NUBASE_CRON_DEFAULT_TIMEOUT_SECONDS:60}
+    max-timeout-seconds: ${NUBASE_CRON_MAX_TIMEOUT_SECONDS:600}
+    run-history-retention-days: ${NUBASE_CRON_RUN_RETENTION_DAYS:30}
+    run-history-retention-scan-ms: ${NUBASE_CRON_RUN_RETENTION_SCAN_MS:3600000}
+
   # AI memory module configuration
   mem:
     enabled: true

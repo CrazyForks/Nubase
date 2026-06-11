@@ -99,6 +99,15 @@ public class QueryExecutor {
         }
     }
 
+    /**
+     * Renders a plan to SQL without executing it. Used by callers that need to run
+     * the statement under their own execution settings (e.g. the cron scheduler
+     * applying a per-job query timeout) while reusing PostgREST's SQL generation.
+     */
+    public String buildSqlForPlan(QueryPlan plan, String body) {
+        return buildSQL(plan, body);
+    }
+
     private String buildSQL(QueryPlan plan, String body) {
         StringBuilder sql = new StringBuilder();
 

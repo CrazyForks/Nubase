@@ -20,7 +20,11 @@ import javax.sql.DataSource;
         // Precise subpackages, not the whole ai.nubase.metadata tree: anything new
         // placed under it should opt into this persistence unit explicitly rather
         // than being swept into the metadata datasource by accident.
-        basePackages = {"ai.nubase.metadata.repository", "ai.nubase.metadata.edge.repository"},
+        basePackages = {
+                "ai.nubase.metadata.repository",
+                "ai.nubase.metadata.edge.repository",
+                "ai.nubase.metadata.cron.repository"
+        },
         entityManagerFactoryRef = "metadataEntityManagerFactory",
         transactionManagerRef = "metadataTransactionManager"
 )
@@ -32,7 +36,7 @@ public class MetadataJpaConfig {
             @Qualifier("metadataDataSource") DataSource metadataDataSource) {
         return builder
                 .dataSource(metadataDataSource)
-                .packages("ai.nubase.metadata.entity", "ai.nubase.metadata.edge.entity")
+                .packages("ai.nubase.metadata.entity", "ai.nubase.metadata.edge.entity", "ai.nubase.metadata.cron.entity")
                 .persistenceUnit("metadata")
                 .build();
     }
