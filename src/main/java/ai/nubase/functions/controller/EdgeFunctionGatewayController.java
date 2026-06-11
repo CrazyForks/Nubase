@@ -6,6 +6,7 @@ import ai.nubase.functions.service.EdgeFunctionExceptions.EdgeFunctionException;
 import ai.nubase.functions.service.EdgeFunctionInvocationService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -23,6 +24,7 @@ import java.util.Set;
 
 @RestController
 @RequiredArgsConstructor
+@ConditionalOnProperty(value = "nubase.functions.enabled", havingValue = "true", matchIfMissing = true)
 public class EdgeFunctionGatewayController {
 
     private static final Set<String> RESPONSE_BLOCKED_HEADERS = Set.of(

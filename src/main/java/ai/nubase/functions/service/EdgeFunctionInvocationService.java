@@ -13,6 +13,7 @@ import ai.nubase.metadata.edge.repository.EdgeFunctionRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -28,6 +29,7 @@ import static ai.nubase.functions.service.EdgeFunctionExceptions.EdgeFunctionExc
 @Slf4j
 @Service
 @RequiredArgsConstructor
+@ConditionalOnProperty(value = "nubase.functions.enabled", havingValue = "true", matchIfMissing = true)
 public class EdgeFunctionInvocationService {
 
     private final EdgeFunctionRepository functionRepository;

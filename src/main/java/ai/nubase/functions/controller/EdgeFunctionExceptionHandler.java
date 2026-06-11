@@ -1,6 +1,7 @@
 package ai.nubase.functions.controller;
 
 import ai.nubase.functions.service.EdgeFunctionExceptions.EdgeFunctionException;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -11,6 +12,7 @@ import java.util.Map;
         EdgeFunctionAdminController.class,
         EdgeFunctionGatewayController.class
 })
+@ConditionalOnProperty(value = "nubase.functions.enabled", havingValue = "true", matchIfMissing = true)
 public class EdgeFunctionExceptionHandler {
 
     @ExceptionHandler(EdgeFunctionException.class)

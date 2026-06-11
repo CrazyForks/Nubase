@@ -3,6 +3,7 @@ package ai.nubase.functions.service;
 import ai.nubase.metadata.edge.entity.EdgeFunctionInvocation;
 import ai.nubase.metadata.edge.repository.EdgeFunctionInvocationRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -14,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Component
 @RequiredArgsConstructor
+@ConditionalOnProperty(value = "nubase.functions.enabled", havingValue = "true", matchIfMissing = true)
 public class EdgeFunctionInvocationLogWriter {
 
     private final EdgeFunctionInvocationRepository invocationRepository;

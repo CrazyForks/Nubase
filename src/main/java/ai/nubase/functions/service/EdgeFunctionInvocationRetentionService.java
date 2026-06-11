@@ -4,6 +4,7 @@ import ai.nubase.functions.executor.EdgeFunctionExecutorProperties;
 import ai.nubase.metadata.edge.repository.EdgeFunctionInvocationRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -14,6 +15,7 @@ import java.time.Instant;
 @Slf4j
 @Service
 @RequiredArgsConstructor
+@ConditionalOnProperty(value = "nubase.functions.enabled", havingValue = "true", matchIfMissing = true)
 public class EdgeFunctionInvocationRetentionService {
 
     private final EdgeFunctionInvocationRepository invocationRepository;
@@ -29,7 +31,7 @@ public class EdgeFunctionInvocationRetentionService {
         if (retentionDays <= 0) return;
 
         Instant cutoff = Instant.now().minus(Duration.ofDays(retentionDays));
-        long deleted = invocationRepository.deleteByCreatedAtBefore(cutoff);
+        int deleted = invocationRepository.deleteByCreatedAtBefore(cutoff);
         if (deleted > 0) {
             log.info("Pruned {} edge function invocation logs older than {}", deleted, cutoff);
         }

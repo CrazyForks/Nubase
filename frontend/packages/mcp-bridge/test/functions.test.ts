@@ -73,6 +73,54 @@ test('functions deploy --bundle uploads a single bundled entrypoint', async () =
   assert.match(source, /bundled/);
 });
 
+test('functions deploy auto-bundles a TypeScript entrypoint', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'nubase-functions-'));
+  const cwd = process.cwd();
+  let uploadedBundle = '';
+  try {
+    process.chdir(dir);
+    const fnDir = path.join(dir, 'nubase/functions/hello');
+    await mkdir(fnDir, { recursive: true });
+    await writeFile(
+      path.join(fnDir, 'index.ts'),
+      'interface Env { NUBASE_PROJECT_REF: string }\n'
+        + 'export default { async fetch(req: Request, env: Env): Promise<Response> { return new Response(env.NUBASE_PROJECT_REF); } };\n'
+    );
+    await runFunctionsCommand(['deploy', 'hello'], config(), fakeClient([], (bundle) => {
+      uploadedBundle = bundle;
+    }));
+  } finally {
+    process.chdir(cwd);
+    await rm(dir, { recursive: true, force: true });
+  }
+  const payload = JSON.parse(Buffer.from(uploadedBundle, 'base64').toString('utf8'));
+  assert.equal(payload.files.length, 1);
+  assert.equal(payload.files[0].path, 'index.js');
+  const source = Buffer.from(payload.files[0].content, 'base64').toString('utf8');
+  assert.doesNotMatch(source, /interface Env|: Promise<Response>/);
+  assert.match(source, /NUBASE_PROJECT_REF/);
+});
+
+test('functions deploy --no-bundle uploads the raw TypeScript directory', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'nubase-functions-'));
+  const cwd = process.cwd();
+  let uploadedBundle = '';
+  try {
+    process.chdir(dir);
+    const fnDir = path.join(dir, 'nubase/functions/hello');
+    await mkdir(fnDir, { recursive: true });
+    await writeFile(path.join(fnDir, 'index.ts'), 'export default { fetch() { return new Response("ok"); } };\n');
+    await runFunctionsCommand(['deploy', 'hello', '--no-bundle'], config(), fakeClient([], (bundle) => {
+      uploadedBundle = bundle;
+    }));
+  } finally {
+    process.chdir(cwd);
+    await rm(dir, { recursive: true, force: true });
+  }
+  const payload = JSON.parse(Buffer.from(uploadedBundle, 'base64').toString('utf8'));
+  assert.deepEqual(payload.files.map((f: { path: string }) => f.path), ['index.ts']);
+});
+
 test('functions deploy prunes node_modules and .git before walking', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'nubase-functions-'));
   const cwd = process.cwd();

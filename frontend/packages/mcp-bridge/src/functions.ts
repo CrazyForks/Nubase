@@ -87,7 +87,7 @@ async function functionsDeploy(args: string[], client: NubaseClient) {
   const { positional, options } = parseFunctionArgs(args);
   const slug = required(positional[0], 'function name');
   const dir = path.resolve(String(options.dir || path.join('nubase', 'functions', slug)));
-  const bundle = options.bundle === true ? await bundleEntrypoint(dir) : await bundleDirectory(dir);
+  const bundle = (await shouldBundle(dir, options)) ? await bundleEntrypoint(dir) : await bundleDirectory(dir);
   try {
     await client.functionsCreate({
       name: slug,
@@ -160,6 +160,15 @@ async function functionsSecrets(args: string[], client: NubaseClient) {
   };
 }
 
+// TypeScript entrypoints must be compiled before upload — the server deploys raw JS
+// and rejects uncompiled .ts (TYPESCRIPT_REQUIRES_BUNDLE) — so deploy auto-bundles
+// when the directory has an index.ts without a compiled index.js sibling.
+async function shouldBundle(dir: string, options: Record<string, string | boolean>) {
+  if (options.bundle === true) return true;
+  if (options['no-bundle'] === true) return false;
+  return (await fileExists(path.join(dir, 'index.ts'))) && !(await fileExists(path.join(dir, 'index.js')));
+}
+
 async function bundleDirectory(dir: string) {
   const files = await listFiles(dir);
   const entries = [];
@@ -178,6 +187,9 @@ async function bundleEntrypoint(dir: string) {
   const esbuild = await loadEsbuild();
   const result = await esbuild.build({
     entryPoints: [entrypoint],
+    // esbuild's service process keeps the cwd it was spawned with; resolve
+    // relative to the function directory instead of whatever that was.
+    absWorkingDir: dir,
     bundle: true,
     write: false,
     format: 'esm',
@@ -223,7 +235,7 @@ async function loadEsbuild(): Promise<{
     const importPackage = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<any>;
     return await importPackage('esbuild');
   } catch {
-    throw new Error('functions deploy --bundle requires esbuild to be installed in the frontend workspace');
+    throw new Error('functions deploy needs esbuild to compile this function (TypeScript entrypoint or --bundle); install esbuild or deploy precompiled JS');
   }
 }
 
@@ -266,7 +278,7 @@ function functionsHelp() {
     usage: [
       'nubase_cli functions new <name>',
       'nubase_cli functions list',
-      'NUBASE_ALLOW_ADMIN_WRITE=true nubase_cli functions deploy <name> [--bundle]',
+      'NUBASE_ALLOW_ADMIN_WRITE=true nubase_cli functions deploy <name> [--bundle|--no-bundle]',
       'NUBASE_ALLOW_ADMIN_WRITE=true nubase_cli functions delete <name>',
       'nubase_cli functions logs [name] --limit 50',
       'nubase_cli functions secrets list <name>',

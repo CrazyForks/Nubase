@@ -3,6 +3,9 @@ package ai.nubase.metadata.edge.repository;
 import ai.nubase.metadata.edge.entity.EdgeFunctionInvocation;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
 import java.util.List;
@@ -18,5 +21,10 @@ public interface EdgeFunctionInvocationRepository extends JpaRepository<EdgeFunc
             Pageable pageable
     );
 
-    long deleteByCreatedAtBefore(Instant cutoff);
+    // Bulk JPQL delete: the derived form loads every matching entity into the
+    // persistence context and deletes row by row — an OOM/long-lock hazard once the
+    // log table grows to millions of rows.
+    @Modifying
+    @Query("delete from EdgeFunctionInvocation i where i.createdAt < :cutoff")
+    int deleteByCreatedAtBefore(@Param("cutoff") Instant cutoff);
 }

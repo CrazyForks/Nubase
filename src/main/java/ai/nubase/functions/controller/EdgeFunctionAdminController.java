@@ -12,6 +12,7 @@ import ai.nubase.functions.dto.EdgeFunctionDtos.UpdateFunctionRequest;
 import ai.nubase.functions.service.EdgeFunctionAdminService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -30,6 +31,7 @@ import java.util.Map;
 @RequestMapping("/functions/admin/v1")
 @RequireServiceRole
 @RequiredArgsConstructor
+@ConditionalOnProperty(value = "nubase.functions.enabled", havingValue = "true", matchIfMissing = true)
 public class EdgeFunctionAdminController {
 
     private final EdgeFunctionAdminService adminService;

@@ -1,12 +1,14 @@
 package ai.nubase.functions.executor;
 
 import lombok.Data;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
 @Data
 @Component
 @ConfigurationProperties(prefix = "nubase.functions.executor")
+@ConditionalOnProperty(value = "nubase.functions.enabled", havingValue = "true", matchIfMissing = true)
 public class EdgeFunctionExecutorProperties {
 
     private String provider = "local";

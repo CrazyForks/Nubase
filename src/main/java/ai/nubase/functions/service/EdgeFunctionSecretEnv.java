@@ -5,6 +5,7 @@ import ai.nubase.metadata.edge.entity.EdgeFunctionSecret;
 import ai.nubase.metadata.edge.repository.EdgeFunctionSecretRepository;
 import ai.nubase.postgrest.multidb.EncryptionService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
@@ -19,6 +20,7 @@ import static ai.nubase.functions.service.EdgeFunctionExceptions.EdgeFunctionExc
  */
 @Component
 @RequiredArgsConstructor
+@ConditionalOnProperty(value = "nubase.functions.enabled", havingValue = "true", matchIfMissing = true)
 public class EdgeFunctionSecretEnv {
 
     private final EdgeFunctionSecretRepository secretRepository;
