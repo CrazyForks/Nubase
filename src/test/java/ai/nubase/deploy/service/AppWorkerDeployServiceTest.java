@@ -90,6 +90,8 @@ class AppWorkerDeployServiceTest {
         assertThat(request.getValue().secretTextBindings()).containsEntry("NUBASE_SERVICE_ROLE_KEY", "server-secret");
         assertThat(request.getValue().serverFiles()).hasSize(1);
         assertThat(request.getValue().assetFiles()).hasSize(1);
+        assertThat(request.getValue().serverFiles().get(0).contentType()).isEqualTo("application/javascript+module");
+        assertThat(request.getValue().assetFiles().get(0).contentType()).isEqualTo("text/html");
 
         ArgumentCaptor<RecordDeploymentStepRequest> steps = ArgumentCaptor.forClass(RecordDeploymentStepRequest.class);
         verify(deploymentService, org.mockito.Mockito.times(3)).recordStep(eq(deploymentId), steps.capture());

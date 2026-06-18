@@ -18,7 +18,7 @@ class CloudflareAppWorkerDeployerTest {
     void deployUploadsAssetsThenWorkerScriptToDispatchNamespace() throws Exception {
         try (MockWebServer server = new MockWebServer()) {
             server.enqueue(new MockResponse().setResponseCode(200).setBody("""
-                    {"success":true,"result":{"jwt":"upload-token","buckets":[["c83301425b2ad1d496473a5ff3d9ecca"]]}}
+                    {"success":true,"result":{"jwt":"upload-token","buckets":[["9f42c7c835bb97dcd6982ccc9d14933e","13f1e82bebff3b396749dd8f9d73e8b6"]]}}
                     """));
             server.enqueue(new MockResponse().setResponseCode(201).setBody("""
                     {"success":true,"result":{"jwt":"completion-token"}}
@@ -43,17 +43,33 @@ class CloudflareAppWorkerDeployerTest {
                             "server/index.js",
                             "export default { async fetch(){ return new Response('ok') } }".getBytes(StandardCharsets.UTF_8),
                             "application/javascript+module"
+                    ), new AppWorkerDeploymentRequest.AppWorkerFile(
+                            "server/assets/chunk.js",
+                            "export const chunk = true".getBytes(StandardCharsets.UTF_8),
+                            "application/javascript+module"
+                    ), new AppWorkerDeploymentRequest.AppWorkerFile(
+                            "server/.vite/manifest.json",
+                            "{\"src\":\"server/index.js\"}".getBytes(StandardCharsets.UTF_8),
+                            "application/json"
+                    ), new AppWorkerDeploymentRequest.AppWorkerFile(
+                            "server/assets/styles.css",
+                            "body {}".getBytes(StandardCharsets.UTF_8),
+                            "text/css"
                     )),
                     List.of(new AppWorkerDeploymentRequest.AppWorkerFile(
                             "index.html",
                             "<html></html>".getBytes(StandardCharsets.UTF_8),
                             "text/html"
+                    ), new AppWorkerDeploymentRequest.AppWorkerFile(
+                            "assets/app.js",
+                            "console.log('ok')".getBytes(StandardCharsets.UTF_8),
+                            null
                     ))
             ));
 
             assertThat(result.status()).isEqualTo("deployed");
             assertThat(result.previewUrl()).isEqualTo("https://appabc.ottermind.app");
-            assertThat(result.assetFileCount()).isEqualTo(1);
+            assertThat(result.assetFileCount()).isEqualTo(2);
 
             var session = server.takeRequest();
             assertThat(session.getMethod()).isEqualTo("POST");
@@ -64,7 +80,12 @@ class CloudflareAppWorkerDeployerTest {
             assertThat(assetUpload.getMethod()).isEqualTo("POST");
             assertThat(assetUpload.getPath()).isEqualTo("/client/v4/accounts/acct/workers/assets/upload?base64=true");
             assertThat(assetUpload.getHeader("Authorization")).isEqualTo("Bearer upload-token");
-            assertThat(assetUpload.getBody().readUtf8()).contains("c83301425b2ad1d496473a5ff3d9ecca");
+            assertThat(assetUpload.getHeader("Content-Type")).startsWith("multipart/form-data; boundary=");
+            assertThat(assetUpload.getBody().readUtf8())
+                    .contains("9f42c7c835bb97dcd6982ccc9d14933e")
+                    .contains("13f1e82bebff3b396749dd8f9d73e8b6")
+                    .contains("Content-Type: text/html")
+                    .contains("Content-Type: text/javascript; charset=utf-8");
 
             var scriptUpload = server.takeRequest();
             assertThat(scriptUpload.getMethod()).isEqualTo("PUT");
@@ -74,7 +95,10 @@ class CloudflareAppWorkerDeployerTest {
                     .contains("\"main_module\":\"server/index.js\"")
                     .contains("\"assets\":{\"jwt\":\"completion-token\"}")
                     .contains("\"type\":\"assets\"")
-                    .contains("\"NUBASE_SERVICE_ROLE_KEY\"");
+                    .contains("\"NUBASE_SERVICE_ROLE_KEY\"")
+                    .contains("server/assets/chunk.js")
+                    .doesNotContain("server/.vite/manifest.json")
+                    .doesNotContain("server/assets/styles.css");
         }
     }
 

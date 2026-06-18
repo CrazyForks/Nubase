@@ -76,9 +76,10 @@ public class CloudflareAppWorkerDeployer implements AppWorkerDeployer {
         for (AppWorkerDeploymentRequest.AppWorkerFile file : files) {
             String path = normalizeAssetPath(file.path());
             byte[] content = file.content() == null ? new byte[0] : file.content();
-            String hash = md5Hex(content);
+            String contentType = effectiveContentType(path, file.contentType());
+            String hash = assetHash(workerName, path, content, contentType);
             manifest.put(path, Map.of("hash", hash, "size", content.length));
-            byHash.put(hash, new AppWorkerDeploymentRequest.AppWorkerFile(path, content, file.contentType()));
+            byHash.put(hash, new AppWorkerDeploymentRequest.AppWorkerFile(path, content, contentType));
         }
         String manifestHash = sha256Hex(objectMapper.writeValueAsBytes(manifest));
         String uploadSessionUrl = apiBase()
@@ -100,17 +101,21 @@ public class CloudflareAppWorkerDeployer implements AppWorkerDeployer {
 
         String completionJwt = null;
         for (List<String> bucket : buckets) {
-            Map<String, String> uploadPayload = new LinkedHashMap<>();
+            MultipartBody.Builder uploadBody = new MultipartBody.Builder()
+                    .setType(MultipartBody.FORM);
             for (String hash : bucket) {
                 AppWorkerDeploymentRequest.AppWorkerFile file = byHash.get(hash);
                 if (file == null) {
                     throw new AppWorkerDeploymentException("Cloudflare requested unknown asset hash: " + hash);
                 }
-                uploadPayload.put(hash, Base64.getEncoder().encodeToString(file.content()));
+                uploadBody.addFormDataPart(hash, null, RequestBody.create(
+                        Base64.getEncoder().encodeToString(file.content()).getBytes(StandardCharsets.UTF_8),
+                        mediaTypeFor(file.contentType())
+                ));
             }
             Map<String, Object> uploadResponse = executeJson(new Request.Builder()
                     .url(apiBase() + "/accounts/" + cf().getAccountId() + "/workers/assets/upload?base64=true")
-                    .post(RequestBody.create(objectMapper.writeValueAsBytes(uploadPayload), JSON))
+                    .post(uploadBody.build())
                     .header("Authorization", "Bearer " + uploadJwt)
                     .build());
             String maybeCompletion = stringValue(uploadResponse.get("jwt"));
@@ -127,9 +132,14 @@ public class CloudflareAppWorkerDeployer implements AppWorkerDeployer {
     private void uploadWorker(AppWorkerDeploymentRequest request, String workerName, String assetCompletionJwt) throws IOException {
         Map<String, AppWorkerDeploymentRequest.AppWorkerFile> serverFiles = new LinkedHashMap<>();
         for (AppWorkerDeploymentRequest.AppWorkerFile file : request.serverFiles() == null ? List.<AppWorkerDeploymentRequest.AppWorkerFile>of() : request.serverFiles()) {
-            serverFiles.put(normalizeModulePath(file.path()), file);
+            String path = normalizeModulePath(file.path());
+            if (!isWorkerModulePath(path)) continue;
+            serverFiles.put(path, file);
         }
         String mainModule = normalizeModulePath(firstText(request.mainModule(), request.serverEntrypointPath(), "server/index.js"));
+        if (!isWorkerModulePath(mainModule)) {
+            throw new AppWorkerDeploymentException("main module must be a JavaScript module: " + mainModule);
+        }
         if (!serverFiles.containsKey(mainModule)) {
             throw new AppWorkerDeploymentException("server files must include main module " + mainModule);
         }
@@ -193,6 +203,42 @@ public class CloudflareAppWorkerDeployer implements AppWorkerDeployer {
 
     private boolean reservedBinding(String name) {
         return "ASSETS".equals(name) || "NUBASE_PROJECT_REF".equals(name) || "NUBASE_APP_VERSION".equals(name);
+    }
+
+    private MediaType mediaTypeFor(String contentType) {
+        if (StringUtils.hasText(contentType)) {
+            MediaType parsed = MediaType.parse(contentType.trim());
+            if (parsed != null) return parsed;
+        }
+        return MediaType.parse("application/octet-stream");
+    }
+
+    private String effectiveContentType(String path, String contentType) {
+        if (StringUtils.hasText(contentType)) {
+            String value = contentType.trim();
+            if (MediaType.parse(value) != null && !"application/octet-stream".equalsIgnoreCase(value)) {
+                return value;
+            }
+        }
+        return contentTypeFromPath(path);
+    }
+
+    private String contentTypeFromPath(String path) {
+        String value = path.toLowerCase(Locale.ROOT);
+        if (value.endsWith(".html")) return "text/html; charset=utf-8";
+        if (value.endsWith(".css")) return "text/css; charset=utf-8";
+        if (value.endsWith(".js") || value.endsWith(".mjs")) return "text/javascript; charset=utf-8";
+        if (value.endsWith(".json") || value.endsWith(".map")) return "application/json; charset=utf-8";
+        if (value.endsWith(".svg")) return "image/svg+xml";
+        if (value.endsWith(".png")) return "image/png";
+        if (value.endsWith(".jpg") || value.endsWith(".jpeg")) return "image/jpeg";
+        if (value.endsWith(".webp")) return "image/webp";
+        if (value.endsWith(".ico")) return "image/x-icon";
+        if (value.endsWith(".wasm")) return "application/wasm";
+        if (value.endsWith(".woff")) return "font/woff";
+        if (value.endsWith(".woff2")) return "font/woff2";
+        if (value.endsWith(".txt")) return "text/plain; charset=utf-8";
+        return "application/octet-stream";
     }
 
     private Map<String, Object> executeJson(Request request) throws IOException {
@@ -307,6 +353,11 @@ public class CloudflareAppWorkerDeployer implements AppWorkerDeployer {
         return value;
     }
 
+    private boolean isWorkerModulePath(String path) {
+        String value = path.toLowerCase(Locale.ROOT);
+        return value.endsWith(".js") || value.endsWith(".mjs");
+    }
+
     private String compatibilityDate(String raw) {
         if (StringUtils.hasText(raw)) return raw.trim();
         return LocalDate.now().toString();
@@ -347,8 +398,22 @@ public class CloudflareAppWorkerDeployer implements AppWorkerDeployer {
         return "";
     }
 
-    private String md5Hex(byte[] content) {
-        return digestHex("MD5", content);
+    private String assetHash(String workerName, String path, byte[] content, String contentType) {
+        String extension = "";
+        int slash = path.lastIndexOf('/');
+        int dot = path.lastIndexOf('.');
+        if (dot > slash && dot + 1 < path.length()) {
+            extension = path.substring(dot + 1);
+        }
+        return sha256Hex(workerName + "\n"
+                + path + "\n"
+                + extension + "\n"
+                + contentType + "\n"
+                + Base64.getEncoder().encodeToString(content)).substring(0, 32);
+    }
+
+    private String sha256Hex(String content) {
+        return sha256Hex(content.getBytes(StandardCharsets.UTF_8));
     }
 
     private String sha256Hex(byte[] content) {
