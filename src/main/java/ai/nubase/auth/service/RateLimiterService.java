@@ -134,6 +134,10 @@ public class RateLimiterService {
 
     /** Clear failed-attempt state after a successful sign-in. */
     public void recordSuccess(String identifier) {
+        AuthConfig.RateLimitSettings cfg = effectiveAuthConfig.rateLimit();
+        if (!cfg.isEnabled()) {
+            return;
+        }
         if (useRedis()) {
             redisTemplate.delete("rl:fail:" + tenant() + ":" + identifier);
             redisTemplate.delete("rl:lock:" + tenant() + ":" + identifier);

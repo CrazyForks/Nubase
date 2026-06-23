@@ -23,6 +23,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -104,7 +105,13 @@ class RateLimiterServiceTest {
             assertThatCode(() -> rl.checkRate("otp", "a@x.com")).doesNotThrowAnyException();
             rl.recordFailure("a@x.com");
         }
+        rl.recordSuccess("a@x.com");
         assertThatCode(() -> rl.assertNotLockedOut("a@x.com")).doesNotThrowAnyException();
+
+        StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
+        ReflectionTestUtils.setField(rl, "redisTemplate", redisTemplate);
+        rl.recordSuccess("a@x.com");
+        verifyNoInteractions(redisTemplate);
     }
 
     @Test
