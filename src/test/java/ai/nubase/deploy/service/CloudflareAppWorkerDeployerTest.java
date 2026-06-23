@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class CloudflareAppWorkerDeployerTest {
 
@@ -69,12 +70,14 @@ class CloudflareAppWorkerDeployerTest {
 
             assertThat(result.status()).isEqualTo("deployed");
             assertThat(result.previewUrl()).isEqualTo("https://appabc.ottermind.app");
-            assertThat(result.assetFileCount()).isEqualTo(2);
+            assertThat(result.assetFileCount()).isEqualTo(3);
 
             var session = server.takeRequest();
             assertThat(session.getMethod()).isEqualTo("POST");
             assertThat(session.getPath()).isEqualTo("/client/v4/accounts/acct/workers/dispatch/namespaces/ns/scripts/appabc/assets-upload-session");
-            assertThat(session.getBody().readUtf8()).contains("\"/index.html\"");
+            assertThat(session.getBody().readUtf8())
+                    .contains("\"/index.html\"")
+                    .contains("\"/assets/styles.css\"");
 
             var assetUpload = server.takeRequest();
             assertThat(assetUpload.getMethod()).isEqualTo("POST");
@@ -136,6 +139,49 @@ class CloudflareAppWorkerDeployerTest {
             assertThat(server.getRequestCount()).isEqualTo(2);
             server.takeRequest();
             assertThat(server.takeRequest().getBody().readUtf8()).contains("\"assets\":{\"jwt\":\"completion-token\"}");
+        }
+    }
+
+    @Test
+    void deployFailsClosedWhenServerPublicAssetConflictsWithClientAssetPath() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.start();
+            EdgeFunctionExecutorProperties props = props(server);
+            var deployer = new CloudflareAppWorkerDeployer(props, new ObjectMapper());
+
+            assertThatThrownBy(() -> deployer.deploy(new AppWorkerDeploymentRequest(
+                    "appabc",
+                    "v1",
+                    "appabc",
+                    "server/index.js",
+                    "appabc.ottermind.app",
+                    "appabc.ottermind.app",
+                    "2026-06-17",
+                    List.of("nodejs_compat"),
+                    Map.of(),
+                    Map.of("NUBASE_SERVICE_ROLE_KEY", "secret"),
+                    List.of(new AppWorkerDeploymentRequest.AppWorkerFile(
+                            "server/index.js",
+                            "export default { async fetch(){ return new Response('ok') } }".getBytes(StandardCharsets.UTF_8),
+                            "application/javascript+module"
+                    ), new AppWorkerDeploymentRequest.AppWorkerFile(
+                            "server/assets/styles.css",
+                            "body { color: red; }".getBytes(StandardCharsets.UTF_8),
+                            "text/css"
+                    )),
+                    List.of(new AppWorkerDeploymentRequest.AppWorkerFile(
+                            "assets/styles.css",
+                            "body { color: blue; }".getBytes(StandardCharsets.UTF_8),
+                            "text/css"
+                    ))
+            )))
+                    .isInstanceOf(AppWorkerDeploymentException.class)
+                    .hasMessageContaining("Conflicting public asset path")
+                    .hasMessageContaining("/assets/styles.css")
+                    .hasMessageContaining("appabc")
+                    .hasMessageContaining("v1")
+                    .hasMessageNotContaining("secret");
+            assertThat(server.getRequestCount()).isZero();
         }
     }
 

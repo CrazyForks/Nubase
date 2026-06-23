@@ -21,6 +21,7 @@ import java.security.MessageDigest;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -28,6 +29,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 @Slf4j
 @Component
@@ -38,6 +40,32 @@ public class CloudflareAppWorkerDeployer implements AppWorkerDeployer {
     private static final MediaType JSON = MediaType.parse("application/json");
     private static final MediaType JS_MODULE = MediaType.parse("application/javascript+module");
     private static final List<String> DEFAULT_COMPATIBILITY_FLAGS = List.of("nodejs_compat");
+    private static final Set<String> SERVER_PUBLIC_ASSET_EXTENSIONS = Set.of(
+            ".css",
+            ".json",
+            ".wasm",
+            ".svg",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+            ".webp",
+            ".avif",
+            ".bmp",
+            ".tif",
+            ".tiff",
+            ".ico",
+            ".woff",
+            ".woff2",
+            ".ttf",
+            ".otf",
+            ".eot"
+    );
+    private static final Set<String> SERVER_PUBLIC_ASSET_EXCLUDED_EXTENSIONS = Set.of(
+            ".js",
+            ".mjs",
+            ".map"
+    );
 
     private final EdgeFunctionExecutorProperties properties;
     private final ObjectMapper objectMapper;
@@ -48,7 +76,8 @@ public class CloudflareAppWorkerDeployer implements AppWorkerDeployer {
         validateConfig();
         String workerName = normalizeWorkerName(request.workerName());
         try {
-            AssetUpload upload = uploadAssets(request.assetFiles(), workerName);
+            List<AppWorkerDeploymentRequest.AppWorkerFile> publicAssets = publicAssetFiles(request);
+            AssetUpload upload = uploadAssets(publicAssets, workerName);
             uploadWorker(request, workerName, upload.completionJwt());
             String previewUrl = "https://" + normalizeHost(request.previewHost());
             return new AppWorkerDeploymentResult(
@@ -67,6 +96,60 @@ public class CloudflareAppWorkerDeployer implements AppWorkerDeployer {
                     ? (AppWorkerDeploymentException) e
                     : new AppWorkerDeploymentException(e.getMessage(), e);
         }
+    }
+
+    private List<AppWorkerDeploymentRequest.AppWorkerFile> publicAssetFiles(AppWorkerDeploymentRequest request) {
+        Map<String, AppWorkerDeploymentRequest.AppWorkerFile> byPath = new LinkedHashMap<>();
+        List<AppWorkerDeploymentRequest.AppWorkerFile> assetFiles = request.assetFiles() == null
+                ? List.of()
+                : request.assetFiles();
+        for (AppWorkerDeploymentRequest.AppWorkerFile file : assetFiles) {
+            addPublicAsset(byPath, file.path(), file, request);
+        }
+
+        List<AppWorkerDeploymentRequest.AppWorkerFile> serverFiles = request.serverFiles() == null
+                ? List.of()
+                : request.serverFiles();
+        for (AppWorkerDeploymentRequest.AppWorkerFile file : serverFiles) {
+            String publicPath = serverPublicAssetPath(file.path());
+            if (publicPath == null) continue;
+            byte[] content = file.content() == null ? new byte[0] : file.content();
+            String contentType = effectiveContentType(publicPath, file.contentType());
+            addPublicAsset(byPath, publicPath, new AppWorkerDeploymentRequest.AppWorkerFile(publicPath, content, contentType), request);
+        }
+        return new ArrayList<>(byPath.values());
+    }
+
+    private void addPublicAsset(
+            Map<String, AppWorkerDeploymentRequest.AppWorkerFile> byPath,
+            String rawPath,
+            AppWorkerDeploymentRequest.AppWorkerFile file,
+            AppWorkerDeploymentRequest request
+    ) {
+        String path = normalizeAssetPath(rawPath);
+        byte[] content = file.content() == null ? new byte[0] : file.content();
+        String contentType = effectiveContentType(path, file.contentType());
+        AppWorkerDeploymentRequest.AppWorkerFile candidate = new AppWorkerDeploymentRequest.AppWorkerFile(path, content, contentType);
+        AppWorkerDeploymentRequest.AppWorkerFile existing = byPath.get(path);
+        if (existing == null) {
+            byPath.put(path, candidate);
+            return;
+        }
+        byte[] existingContent = existing.content() == null ? new byte[0] : existing.content();
+        if (Objects.equals(existing.contentType(), contentType) && Arrays.equals(existingContent, content)) {
+            return;
+        }
+        throw new AppWorkerDeploymentException("Conflicting public asset path during app worker deploy: path="
+                + path + " appCode=" + firstText(request.appCode(), "") + " version=" + firstText(request.version(), ""));
+    }
+
+    private String serverPublicAssetPath(String rawPath) {
+        String path = normalizeModulePath(rawPath);
+        if (!path.startsWith("server/assets/")) return null;
+        String extension = extension(path);
+        if (SERVER_PUBLIC_ASSET_EXCLUDED_EXTENSIONS.contains(extension)) return null;
+        if (!SERVER_PUBLIC_ASSET_EXTENSIONS.contains(extension)) return null;
+        return "assets/" + path.substring("server/assets/".length());
     }
 
     private AssetUpload uploadAssets(List<AppWorkerDeploymentRequest.AppWorkerFile> assetFiles, String workerName) throws IOException {
@@ -415,6 +498,14 @@ public class CloudflareAppWorkerDeployer implements AppWorkerDeployer {
     private boolean isWorkerModulePath(String path) {
         String value = path.toLowerCase(Locale.ROOT);
         return value.endsWith(".js") || value.endsWith(".mjs");
+    }
+
+    private String extension(String path) {
+        String value = path.toLowerCase(Locale.ROOT);
+        int slash = value.lastIndexOf('/');
+        int dot = value.lastIndexOf('.');
+        if (dot <= slash || dot + 1 >= value.length()) return "";
+        return value.substring(dot);
     }
 
     private String compatibilityDate(String raw) {
