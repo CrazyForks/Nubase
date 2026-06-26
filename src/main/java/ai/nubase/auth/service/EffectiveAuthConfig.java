@@ -7,6 +7,11 @@ import ai.nubase.common.context.MultiTenancyContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+
 /**
  * Resolves the EFFECTIVE auth settings for the current request: a per-tenant
  * {@link TenantAuthConfig} override (from {@code database_configs.auth_config}) layered over the
@@ -57,7 +62,35 @@ public class EffectiveAuthConfig {
 
     public AuthConfig.RedirectSettings redirect() {
         TenantAuthConfig t = tenant();
-        return t != null && t.getRedirect() != null ? t.getRedirect() : global.getRedirect();
+        AuthConfig.RedirectSettings base = t != null && t.getRedirect() != null
+                ? t.getRedirect()
+                : global.getRedirect();
+        if (t == null || t.getManagedRedirectAllowLists() == null
+                || t.getManagedRedirectAllowLists().isEmpty()) {
+            return base;
+        }
+        return withManagedRedirectAllowLists(base, t.getManagedRedirectAllowLists());
+    }
+
+    private AuthConfig.RedirectSettings withManagedRedirectAllowLists(
+            AuthConfig.RedirectSettings base,
+            Map<String, List<String>> managed) {
+        AuthConfig.RedirectSettings merged = new AuthConfig.RedirectSettings();
+        merged.setAllowTenantDomain(base.isAllowTenantDomain());
+        merged.setAllowLocalhost(base.isAllowLocalhost());
+        merged.setSiteUrl(base.getSiteUrl());
+
+        LinkedHashSet<String> allowList = new LinkedHashSet<>();
+        if (base.getAllowList() != null) {
+            allowList.addAll(base.getAllowList());
+        }
+        managed.values().forEach(urls -> {
+            if (urls != null) {
+                allowList.addAll(urls);
+            }
+        });
+        merged.setAllowList(new ArrayList<>(allowList));
+        return merged;
     }
 
     public AuthConfig.PasswordSettings password() {

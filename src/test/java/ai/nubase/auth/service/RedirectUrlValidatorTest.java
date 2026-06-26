@@ -1,12 +1,14 @@
 package ai.nubase.auth.service;
 
 import ai.nubase.common.config.AuthConfig;
+import ai.nubase.common.config.TenantAuthConfig;
 import ai.nubase.common.context.MultiTenancyContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -66,6 +68,27 @@ class RedirectUrlValidatorTest {
         assertThat(v.isAllowed("https://app.example.com/a/b/c")).isTrue();
         assertThat(v.isAllowed("https://app.example.com.evil.com/x")).isFalse(); // suffix spoof
         assertThat(v.isAllowed("https://evil.com/app.example.com")).isFalse();
+    }
+
+    @Test
+    @DisplayName("managed redirect allow-lists are honoured")
+    void managedRedirectAllowLists() {
+        AuthConfig cfg = new AuthConfig();
+        cfg.getRedirect().setAllowLocalhost(false);
+        TenantAuthConfig tenant = new TenantAuthConfig();
+        tenant.setManagedRedirectAllowLists(Map.of(
+                "ottermind", List.of("https://appabc.ottermind.app/auth/callback")
+        ));
+        MultiTenancyContext.setContext(MultiTenancyContext.ContextData.builder()
+                .appCode("demo").schemaName("public").jwtSecret("s")
+                .tenantAuthConfig(tenant).build());
+
+        RedirectUrlValidator v = validator(cfg);
+
+        assertThat(v.isAllowed("https://appabc.ottermind.app/auth/callback")).isTrue();
+        assertThat(v.isAllowed("https://appabc.ottermind.app/auth/callback?returnTo=%2F")).isTrue();
+        assertThat(v.isAllowed("https://appabc.ottermind.app/auth/callback#access_token=token")).isTrue();
+        assertThat(v.isAllowed("https://other.ottermind.app/auth/callback")).isFalse();
     }
 
     @Test

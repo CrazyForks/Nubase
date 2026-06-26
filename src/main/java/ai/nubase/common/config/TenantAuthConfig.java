@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.Data;
 
 import java.util.Map;
+import java.util.List;
 
 /**
  * Per-tenant authentication settings, stored as JSON in {@code database_configs.auth_config}
@@ -25,6 +26,13 @@ public class TenantAuthConfig {
     private AuthConfig.RateLimitSettings rateLimit;
     private AuthConfig.RedirectSettings redirect;
     private AuthConfig.PasswordSettings password;
+
+    /**
+     * Platform-owned redirect allow-lists keyed by namespace.
+     * <p>Used by external platforms to manage their own callback domains without replacing a
+     * tenant's manually configured {@code redirect.allowList}.
+     */
+    private Map<String, List<String>> managedRedirectAllowLists;
 
     /** Override email-confirmation requirement (null → inherit global / OAuth config). */
     private Boolean emailConfirmationRequired;

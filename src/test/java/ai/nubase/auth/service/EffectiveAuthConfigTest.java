@@ -7,6 +7,10 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -64,5 +68,32 @@ class EffectiveAuthConfigTest {
         assertThat(effective.mfa()).isSameAs(global.getMfa());          // not overridden → global
         assertThat(effective.signupDisabled()).isTrue();
         assertThat(effective.emailConfirmationRequired()).isFalse();
+    }
+
+    @Test
+    @DisplayName("managed redirect allow-lists merge without mutating global settings")
+    void managedRedirectAllowListsMergeWithoutMutation() {
+        global.getRedirect().setAllowList(List.of("https://manual.example.com/auth/callback"));
+        TenantAuthConfig tac = new TenantAuthConfig();
+        Map<String, List<String>> managed = new LinkedHashMap<>();
+        managed.put("ottermind", List.of(
+                "https://appabc.ottermind.app/auth/callback",
+                "https://appabc-live.ottermind.app/auth/callback"
+        ));
+        managed.put("other", List.of("https://other.example.com/auth/callback"));
+        tac.setManagedRedirectAllowLists(managed);
+        setTenant(tac);
+
+        AuthConfig.RedirectSettings redirect = effective.redirect();
+
+        assertThat(redirect).isNotSameAs(global.getRedirect());
+        assertThat(redirect.getAllowList()).containsExactly(
+                "https://manual.example.com/auth/callback",
+                "https://appabc.ottermind.app/auth/callback",
+                "https://appabc-live.ottermind.app/auth/callback",
+                "https://other.example.com/auth/callback"
+        );
+        assertThat(global.getRedirect().getAllowList())
+                .containsExactly("https://manual.example.com/auth/callback");
     }
 }

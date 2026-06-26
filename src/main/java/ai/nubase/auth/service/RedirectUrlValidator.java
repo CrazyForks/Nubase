@@ -80,11 +80,19 @@ public class RedirectUrlValidator {
             }
         }
 
-        // Configured allow-list patterns (matched against the full URL; an admin opting in to a
-        // custom scheme — e.g. a mobile deep link — is honoured here).
+        // Configured allow-list patterns. Exact callback entries are allowed to receive transient
+        // query/fragment state (for example ?returnTo=/) without forcing every query variant into
+        // the allow-list.
         if (cfg.getAllowList() != null) {
+            String urlWithoutQueryOrFragment = withoutQueryOrFragment(uri);
             for (String pattern : cfg.getAllowList()) {
-                if (StringUtils.isNotBlank(pattern) && globMatches(pattern, redirectTo)) {
+                if (StringUtils.isBlank(pattern)) {
+                    continue;
+                }
+                if (globMatches(pattern, redirectTo)
+                        || (urlWithoutQueryOrFragment != null
+                            && !urlWithoutQueryOrFragment.equals(redirectTo)
+                            && globMatches(pattern, urlWithoutQueryOrFragment))) {
                     return true;
                 }
             }
@@ -111,6 +119,23 @@ public class RedirectUrlValidator {
         }
         try {
             return URI.create(authConfig.getApp().getDomain(appCode)).getHost();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private String withoutQueryOrFragment(URI uri) {
+        if (uri == null || (uri.getQuery() == null && uri.getFragment() == null)) {
+            return null;
+        }
+        try {
+            return new URI(
+                    uri.getScheme(),
+                    uri.getAuthority(),
+                    uri.getPath(),
+                    null,
+                    null
+            ).toString();
         } catch (Exception e) {
             return null;
         }
