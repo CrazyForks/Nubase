@@ -2,13 +2,6 @@ package ai.nubase.deploy.controller;
 
 import ai.nubase.auth.annotation.RequireServiceRole;
 import ai.nubase.deploy.dto.AppDeploymentDtos.CompleteDeploymentRequest;
-import ai.nubase.deploy.dto.AppDeploymentDtos.AppWorkerDeleteResponse;
-import ai.nubase.deploy.dto.AppDeploymentDtos.AppWorkerActivateVersionRequest;
-import ai.nubase.deploy.dto.AppDeploymentDtos.AppWorkerActivateVersionResponse;
-import ai.nubase.deploy.dto.AppDeploymentDtos.AppWorkerDeployMetadata;
-import ai.nubase.deploy.dto.AppDeploymentDtos.AppWorkerDeployResponse;
-import ai.nubase.deploy.dto.AppDeploymentDtos.AppWorkerDetail;
-import ai.nubase.deploy.dto.AppDeploymentDtos.AppWorkerSummary;
 import ai.nubase.deploy.dto.AppDeploymentDtos.CreateDeploymentRequest;
 import ai.nubase.deploy.dto.AppDeploymentDtos.DeploymentDetailResponse;
 import ai.nubase.deploy.dto.AppDeploymentDtos.DeploymentResponse;
@@ -17,23 +10,15 @@ import ai.nubase.deploy.dto.AppDeploymentDtos.RecordDeploymentStepRequest;
 import ai.nubase.deploy.dto.AppDeploymentDtos.RollbackDeploymentResponse;
 import ai.nubase.deploy.service.AppDeploymentRollbackService;
 import ai.nubase.deploy.service.AppDeploymentService;
-import ai.nubase.deploy.service.AppWorkerDeployService;
-import ai.nubase.deploy.service.AppWorkerService;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.multipart.MultipartFile;
-import org.springframework.web.server.ResponseStatusException;
-import org.springframework.http.HttpStatus;
 
 import java.util.List;
 import java.util.UUID;
@@ -45,9 +30,6 @@ public class AppDeploymentAdminController {
 
     private final AppDeploymentService deploymentService;
     private final AppDeploymentRollbackService rollbackService;
-    private final AppWorkerDeployService appWorkerDeployService;
-    private final AppWorkerService appWorkerService;
-    private final ObjectMapper objectMapper;
 
     @RequireServiceRole
     @PostMapping("/deployments")
@@ -95,55 +77,5 @@ public class AppDeploymentAdminController {
     @PostMapping("/deployments/{id}/rollback")
     public ResponseEntity<RollbackDeploymentResponse> rollback(@PathVariable UUID id) {
         return ResponseEntity.ok(rollbackService.rollback(id));
-    }
-
-    @RequireServiceRole
-    @GetMapping("/app-workers")
-    public ResponseEntity<List<AppWorkerSummary>> listAppWorkers() {
-        return ResponseEntity.ok(appWorkerService.list());
-    }
-
-    @RequireServiceRole
-    @GetMapping("/app-workers/{workerName}")
-    public ResponseEntity<AppWorkerDetail> getAppWorker(@PathVariable String workerName) {
-        return ResponseEntity.ok(appWorkerService.get(workerName));
-    }
-
-    @RequireServiceRole
-    @DeleteMapping("/app-workers/{workerName}")
-    public ResponseEntity<AppWorkerDeleteResponse> deleteAppWorker(@PathVariable String workerName) {
-        return ResponseEntity.ok(appWorkerService.delete(workerName));
-    }
-
-    @RequireServiceRole
-    @PostMapping("/app-workers/{workerName}/versions/{providerVersionId}/activate")
-    public ResponseEntity<AppWorkerActivateVersionResponse> activateAppWorkerVersion(
-            @PathVariable String workerName,
-            @PathVariable String providerVersionId,
-            @RequestBody(required = false) AppWorkerActivateVersionRequest request
-    ) {
-        AppWorkerActivateVersionRequest merged = new AppWorkerActivateVersionRequest(
-                request == null ? null : request.version(),
-                workerName,
-                providerVersionId,
-                request == null ? null : request.previewHost()
-        );
-        return ResponseEntity.ok(appWorkerDeployService.activateVersion(merged));
-    }
-
-    @PostMapping(value = "/app-workers/deploy", consumes = "multipart/form-data")
-    public ResponseEntity<AppWorkerDeployResponse> deployAppWorker(
-            @RequestPart("metadata") String metadataJson,
-            @RequestPart("serverFile") List<MultipartFile> serverFiles,
-            @RequestPart(value = "assetFile", required = false) List<MultipartFile> assetFiles
-    ) {
-        try {
-            AppWorkerDeployMetadata metadata = objectMapper.readValue(metadataJson, AppWorkerDeployMetadata.class);
-            return ResponseEntity.ok(appWorkerDeployService.deploy(metadata, serverFiles, assetFiles));
-        } catch (ResponseStatusException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid app worker deployment payload", e);
-        }
     }
 }

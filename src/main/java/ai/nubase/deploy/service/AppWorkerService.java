@@ -47,7 +47,12 @@ public class AppWorkerService {
 
     @Transactional(transactionManager = "metadataTransactionManager", readOnly = true)
     public List<AppWorkerSummary> list() {
-        return ownedWorkers().values().stream()
+        return list(projectRef());
+    }
+
+    @Transactional(transactionManager = "metadataTransactionManager", readOnly = true)
+    public List<AppWorkerSummary> list(String appCode) {
+        return ownedWorkers(requireAppCode(appCode)).values().stream()
                 .map(this::toSummary)
                 .sorted(Comparator.comparing(AppWorkerSummary::workerName))
                 .toList();
@@ -55,24 +60,35 @@ public class AppWorkerService {
 
     @Transactional(transactionManager = "metadataTransactionManager", readOnly = true)
     public AppWorkerDetail get(String workerName) {
-        OwnedWorker owned = requireOwned(workerName);
+        return get(projectRef(), workerName);
+    }
+
+    @Transactional(transactionManager = "metadataTransactionManager", readOnly = true)
+    public AppWorkerDetail get(String appCode, String workerName) {
+        OwnedWorker owned = requireOwned(requireAppCode(appCode), workerName);
         AppWorkerInfo info = deployer.get(owned.workerName());
         return new AppWorkerDetail(toSummary(owned), info.exists(), info.details());
     }
 
     @Transactional("metadataTransactionManager")
     public AppWorkerDeleteResponse delete(String workerName) {
-        OwnedWorker owned = requireOwned(workerName);
+        return delete(projectRef(), workerName);
+    }
+
+    @Transactional("metadataTransactionManager")
+    public AppWorkerDeleteResponse delete(String appCode, String workerName) {
+        String projectRef = requireAppCode(appCode);
+        OwnedWorker owned = requireOwned(projectRef, workerName);
         deployer.delete(owned.workerName());
-        DeploymentResponse audit = recordDeletion(owned);
+        DeploymentResponse audit = recordDeletion(projectRef, owned);
         return new AppWorkerDeleteResponse(owned.workerName(), true, audit.id());
     }
 
-    private OwnedWorker requireOwned(String workerName) {
+    private OwnedWorker requireOwned(String appCode, String workerName) {
         if (!StringUtils.hasText(workerName)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "workerName is required");
         }
-        OwnedWorker owned = ownedWorkers().get(canonical(workerName));
+        OwnedWorker owned = ownedWorkers(appCode).get(canonical(workerName));
         if (owned == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND,
                     "App worker not found for this project: " + workerName.trim());
@@ -81,8 +97,7 @@ public class AppWorkerService {
     }
 
     /** Latest app-worker deployment per worker name owned by the current project, keyed by canonical name. */
-    private Map<String, OwnedWorker> ownedWorkers() {
-        String projectRef = projectRef();
+    private Map<String, OwnedWorker> ownedWorkers(String projectRef) {
         List<AppDeployment> deployments = deploymentRepository
                 .findByProjectRefOrderByCreatedAtDesc(projectRef, PageRequest.of(0, SCAN_LIMIT));
         Map<String, OwnedWorker> byName = new LinkedHashMap<>();
@@ -98,14 +113,14 @@ public class AppWorkerService {
         return byName;
     }
 
-    private DeploymentResponse recordDeletion(OwnedWorker owned) {
-        DeploymentResponse record = deploymentService.create(new CreateDeploymentRequest(
-                str(owned.summary().get("appCode")),
+    private DeploymentResponse recordDeletion(String appCode, OwnedWorker owned) {
+        DeploymentResponse record = deploymentService.createForProjectRef(appCode, new CreateDeploymentRequest(
+                appCode,
                 Map.of("type", "app_worker_delete", "workerName", owned.workerName()),
                 null,
                 null
         ));
-        deploymentService.recordStep(record.id(), new RecordDeploymentStepRequest(
+        deploymentService.recordStepForProjectRef(appCode, record.id(), new RecordDeploymentStepRequest(
                 1,
                 "cloudflare_app_worker_delete",
                 owned.workerName(),
@@ -113,7 +128,7 @@ public class AppWorkerService {
                 Map.of("workerName", owned.workerName()),
                 null
         ));
-        return deploymentService.complete(record.id(), new CompleteDeploymentRequest(
+        return deploymentService.completeForProjectRef(appCode, record.id(), new CompleteDeploymentRequest(
                 AppDeployment.STATUS_SUCCEEDED,
                 null,
                 null
@@ -151,6 +166,13 @@ public class AppWorkerService {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Project context is required");
         }
         return projectRef;
+    }
+
+    private String requireAppCode(String appCode) {
+        if (!StringUtils.hasText(appCode)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "appCode is required");
+        }
+        return appCode.trim();
     }
 
     private static String canonical(String workerName) {

@@ -255,12 +255,24 @@ nubase:
       local:
         base-url: ${NUBASE_FUNCTIONS_LOCAL_BASE_URL:http://localhost:8787}
       cloudflare:
-        api-base-url: ${CLOUDFLARE_API_BASE_URL:https://api.cloudflare.com/client/v4}
-        account-id: ${CLOUDFLARE_ACCOUNT_ID:}
-        api-token: ${CLOUDFLARE_API_TOKEN:}
-        dispatch-namespace: ${CLOUDFLARE_WORKERS_DISPATCH_NAMESPACE:}
+        api-base-url: ${NUBASE_FUNCTIONS_CLOUDFLARE_API_BASE_URL:${CLOUDFLARE_API_BASE_URL:https://api.cloudflare.com/client/v4}}
+        account-id: ${NUBASE_FUNCTIONS_CLOUDFLARE_ACCOUNT_ID:${CLOUDFLARE_ACCOUNT_ID:}}
+        api-token: ${NUBASE_FUNCTIONS_CLOUDFLARE_API_TOKEN:${CLOUDFLARE_API_TOKEN:}}
+        dispatch-namespace: ${NUBASE_FUNCTIONS_CLOUDFLARE_DISPATCH_NAMESPACE:${CLOUDFLARE_WORKERS_DISPATCH_NAMESPACE:}}
         dispatcher-url: ${NUBASE_FUNCTIONS_CLOUDFLARE_DISPATCHER_URL:}
         dispatcher-secret: ${NUBASE_FUNCTIONS_CLOUDFLARE_DISPATCHER_SECRET:}
+
+  deploy:
+    app-worker:
+      cloudflare:
+        enabled: ${NUBASE_APP_WORKER_CLOUDFLARE_ENABLED:false}
+        api-base-url: ${NUBASE_APP_WORKER_CLOUDFLARE_API_BASE_URL:${CLOUDFLARE_API_BASE_URL:https://api.cloudflare.com/client/v4}}
+        account-id: ${NUBASE_APP_WORKER_CLOUDFLARE_ACCOUNT_ID:${CLOUDFLARE_ACCOUNT_ID:}}
+        api-token: ${NUBASE_APP_WORKER_CLOUDFLARE_API_TOKEN:}
+        timeout-ms: ${NUBASE_APP_WORKER_CLOUDFLARE_TIMEOUT_MS:30000}
+        dispatch-namespaces:
+          preview: ${NUBASE_APP_WORKER_CLOUDFLARE_PREVIEW_DISPATCH_NAMESPACE:}
+          production: ${NUBASE_APP_WORKER_CLOUDFLARE_PRODUCTION_DISPATCH_NAMESPACE:}
 
   # Scheduled jobs (Supabase-Cron-style). The control plane claims due jobs with a
   # row-level compare-and-set, so any number of instances can run concurrently.

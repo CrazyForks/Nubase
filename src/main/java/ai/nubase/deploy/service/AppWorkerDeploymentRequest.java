@@ -6,6 +6,7 @@ import java.util.Map;
 public record AppWorkerDeploymentRequest(
         String appCode,
         String version,
+        AppWorkerDeploymentTarget deploymentTarget,
         String workerName,
         String mainModule,
         String serverEntrypointPath,

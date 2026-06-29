@@ -3,8 +3,6 @@ package ai.nubase.deploy.service;
 import ai.nubase.common.context.MultiTenancyContext;
 import ai.nubase.deploy.dto.AppDeploymentDtos.AppWorkerDeployMetadata;
 import ai.nubase.deploy.dto.AppDeploymentDtos.AppWorkerDeployResponse;
-import ai.nubase.deploy.dto.AppDeploymentDtos.AppWorkerActivateVersionRequest;
-import ai.nubase.deploy.dto.AppDeploymentDtos.AppWorkerActivateVersionResponse;
 import ai.nubase.deploy.dto.AppDeploymentDtos.CompleteDeploymentRequest;
 import ai.nubase.deploy.dto.AppDeploymentDtos.CreateDeploymentRequest;
 import ai.nubase.deploy.dto.AppDeploymentDtos.RecordDeploymentStepRequest;
@@ -40,13 +38,14 @@ public class AppWorkerDeployService {
         validate(metadata, serverFiles);
         String appCode = metadata.appCode().trim();
         String workerName = StringUtils.hasText(metadata.workerName()) ? metadata.workerName().trim() : appCode;
+        AppWorkerDeploymentTarget deploymentTarget = deploymentTarget(metadata.deploymentTarget());
         String previewHost = StringUtils.hasText(metadata.previewHost())
                 ? metadata.previewHost().trim()
-                : workerName + ".ottermind.app";
+                : defaultHost(workerName, deploymentTarget);
 
         var deployment = deploymentService.createForProjectRef(appCode, new CreateDeploymentRequest(
                 appCode,
-                manifestSummary(metadata, serverFiles, assetFiles),
+                manifestSummary(metadata, serverFiles, assetFiles, previewHost, deploymentTarget),
                 null,
                 metadata.version()
         ));
@@ -74,6 +73,7 @@ public class AppWorkerDeployService {
             AppWorkerDeploymentResult result = deployer.deploy(new AppWorkerDeploymentRequest(
                     appCode,
                     metadata.version(),
+                    deploymentTarget,
                     workerName,
                     metadata.mainModule(),
                     metadata.serverEntrypointPath(),
@@ -102,6 +102,8 @@ public class AppWorkerDeployService {
             return new AppWorkerDeployResponse(
                     deployment.id(),
                     result.provider(),
+                    result.deploymentTarget(),
+                    result.dispatchNamespace(),
                     result.providerDeploymentId(),
                     result.providerVersionId(),
                     result.previewUrl(),
@@ -129,82 +131,14 @@ public class AppWorkerDeployService {
             return new AppWorkerDeployResponse(
                     deployment.id(),
                     "cloudflare",
+                    deploymentTarget.value(),
+                    null,
                     workerName,
                     null,
                     null,
                     "failed",
                     null,
                     assetFiles == null ? 0 : assetFiles.size(),
-                    Instant.now(),
-                    message
-            );
-        }
-    }
-
-    public AppWorkerActivateVersionResponse activateVersion(AppWorkerActivateVersionRequest request) {
-        validateActivate(request);
-        String appCode = StringUtils.hasText(MultiTenancyContext.getAppCode())
-                ? MultiTenancyContext.getAppCode().trim()
-                : workerAppCode(request.workerName());
-        String workerName = StringUtils.hasText(request.workerName()) ? request.workerName().trim() : appCode;
-        String previewHost = StringUtils.hasText(request.previewHost())
-                ? request.previewHost().trim()
-                : workerName + ".ottermind.app";
-        String version = StringUtils.hasText(request.version()) ? request.version().trim() : request.providerVersionId().trim();
-
-        var deployment = deploymentService.createForProjectRef(appCode, new CreateDeploymentRequest(
-                appCode,
-                activateManifestSummary(workerName, version, request.providerVersionId(), previewHost),
-                null,
-                version
-        ));
-        try {
-            AppWorkerDeploymentResult result = deployer.activate(workerName, request.providerVersionId().trim(), previewHost);
-            deploymentService.recordStepForProjectRef(appCode, deployment.id(), new RecordDeploymentStepRequest(
-                    1,
-                    "cloudflare_app_worker_activate_version",
-                    result.providerDeploymentId(),
-                    AppDeploymentStep.STATUS_SUCCEEDED,
-                    activationResult(result),
-                    null
-            ));
-            deploymentService.completeForProjectRef(appCode, deployment.id(), new CompleteDeploymentRequest(
-                    AppDeployment.STATUS_SUCCEEDED,
-                    result.previewUrl(),
-                    null
-            ));
-            return new AppWorkerActivateVersionResponse(
-                    deployment.id(),
-                    result.provider(),
-                    result.providerDeploymentId(),
-                    result.providerVersionId(),
-                    result.previewUrl(),
-                    result.status(),
-                    result.deployedAt(),
-                    null
-            );
-        } catch (Exception e) {
-            String message = e.getMessage() == null ? e.toString() : e.getMessage();
-            deploymentService.recordStepForProjectRef(appCode, deployment.id(), new RecordDeploymentStepRequest(
-                    99,
-                    "cloudflare_app_worker_activate_version",
-                    workerName,
-                    AppDeploymentStep.STATUS_FAILED,
-                    Map.of(),
-                    message
-            ));
-            deploymentService.completeForProjectRef(appCode, deployment.id(), new CompleteDeploymentRequest(
-                    AppDeployment.STATUS_FAILED,
-                    null,
-                    message
-            ));
-            return new AppWorkerActivateVersionResponse(
-                    deployment.id(),
-                    "cloudflare",
-                    workerName,
-                    request.providerVersionId(),
-                    null,
-                    "failed",
                     Instant.now(),
                     message
             );
@@ -219,6 +153,9 @@ public class AppWorkerDeployService {
         if (!StringUtils.hasText(metadata.appCode())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "metadata.appCode is required");
         }
+        if (!StringUtils.hasText(metadata.deploymentTarget())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "metadata.deploymentTarget is required");
+        }
         if (StringUtils.hasText(contextApp) && !contextApp.equals(metadata.appCode())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "metadata.appCode must match project context");
         }
@@ -226,27 +163,6 @@ public class AppWorkerDeployService {
         if (serverFiles == null || serverFiles.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "serverFile is required");
         }
-    }
-
-    private void validateActivate(AppWorkerActivateVersionRequest request) {
-        if (request == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "request is required");
-        }
-        String workerName = request.workerName();
-        String appCode = StringUtils.hasText(MultiTenancyContext.getAppCode())
-                ? MultiTenancyContext.getAppCode()
-                : workerAppCode(workerName);
-        if (!StringUtils.hasText(appCode)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "appCode is required");
-        }
-        if (!StringUtils.hasText(request.providerVersionId())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "providerVersionId is required");
-        }
-        requireWorkerNameOwnedByApp(appCode, workerName);
-    }
-
-    private String workerAppCode(String workerName) {
-        return StringUtils.hasText(workerName) ? workerName.trim().split("-", 2)[0] : null;
     }
 
     /**
@@ -262,14 +178,16 @@ public class AppWorkerDeployService {
         String worker = workerName.trim().toLowerCase(Locale.ROOT);
         if (!worker.equals(app) && !worker.startsWith(app + "-")) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-                    "metadata.workerName must equal the project appCode or start with \"" + app + "-\"");
+                    "workerName must equal the project appCode or start with \"" + app + "-\"");
         }
     }
 
     private Map<String, Object> manifestSummary(
             AppWorkerDeployMetadata metadata,
             List<MultipartFile> serverFiles,
-            List<MultipartFile> assetFiles
+            List<MultipartFile> assetFiles,
+            String previewHost,
+            AppWorkerDeploymentTarget deploymentTarget
     ) {
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("type", "app_worker");
@@ -277,7 +195,8 @@ public class AppWorkerDeployService {
         summary.put("version", metadata.version());
         summary.put("workerName", StringUtils.hasText(metadata.workerName()) ? metadata.workerName() : metadata.appCode());
         summary.put("mainModule", metadata.mainModule());
-        summary.put("previewHost", metadata.previewHost());
+        summary.put("previewHost", previewHost);
+        summary.put("deploymentTarget", deploymentTarget.value());
         summary.put("serverFiles", serverFiles == null ? 0 : serverFiles.size());
         summary.put("assetFiles", assetFiles == null ? 0 : assetFiles.size());
         Map<String, String> bindings = plainBindings(metadata);
@@ -285,21 +204,6 @@ public class AppWorkerDeployService {
         putIfPresent(summary, "runtimeMode", runtimeMode);
         putIfPresent(summary, "upstreamEndpoint", bindings.get("NUBASE_UPSTREAM_URL"));
         summary.put("proxyEnabled", "same-origin-proxy".equals(runtimeMode));
-        return summary;
-    }
-
-    private Map<String, Object> activateManifestSummary(
-            String workerName,
-            String version,
-            String providerVersionId,
-            String previewHost
-    ) {
-        Map<String, Object> summary = new LinkedHashMap<>();
-        summary.put("type", "app_worker_activate_version");
-        summary.put("workerName", workerName);
-        summary.put("version", version);
-        summary.put("providerVersionId", providerVersionId);
-        summary.put("previewHost", previewHost);
         return summary;
     }
 
@@ -333,6 +237,8 @@ public class AppWorkerDeployService {
     private Map<String, Object> deploymentResult(AppWorkerDeploymentResult result) {
         Map<String, Object> out = new LinkedHashMap<>();
         putIfPresent(out, "provider", result.provider());
+        putIfPresent(out, "deploymentTarget", result.deploymentTarget());
+        putIfPresent(out, "dispatchNamespace", result.dispatchNamespace());
         putIfPresent(out, "providerDeploymentId", result.providerDeploymentId());
         putIfPresent(out, "providerVersionId", result.providerVersionId());
         putIfPresent(out, "previewUrl", result.previewUrl());
@@ -342,19 +248,23 @@ public class AppWorkerDeployService {
         return out;
     }
 
-    private Map<String, Object> activationResult(AppWorkerDeploymentResult result) {
-        Map<String, Object> out = new LinkedHashMap<>();
-        putIfPresent(out, "provider", result.provider());
-        putIfPresent(out, "providerDeploymentId", result.providerDeploymentId());
-        putIfPresent(out, "providerVersionId", result.providerVersionId());
-        putIfPresent(out, "previewUrl", result.previewUrl());
-        putIfPresent(out, "status", result.status());
-        return out;
-    }
-
     private void putIfPresent(Map<String, Object> out, String key, Object value) {
         if (value != null) {
             out.put(key, value);
         }
+    }
+
+    private AppWorkerDeploymentTarget deploymentTarget(String raw) {
+        try {
+            return AppWorkerDeploymentTarget.from(raw);
+        } catch (AppWorkerDeploymentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage(), e);
+        }
+    }
+
+    private String defaultHost(String workerName, AppWorkerDeploymentTarget target) {
+        return target == AppWorkerDeploymentTarget.PREVIEW
+                ? "preview-" + workerName + ".ottermind.app"
+                : workerName + ".ottermind.app";
     }
 }

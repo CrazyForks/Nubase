@@ -127,6 +127,7 @@ public final class AppDeploymentDtos {
             String serverEntrypointPath,
             String clientDistPath,
             String previewHost,
+            String deploymentTarget,
             String compatibilityDate,
             List<String> compatibilityFlags,
             Map<String, String> envBindings,
@@ -138,6 +139,8 @@ public final class AppDeploymentDtos {
     public record AppWorkerDeployResponse(
             UUID deploymentId,
             String provider,
+            String deploymentTarget,
+            String dispatchNamespace,
             String providerDeploymentId,
             String providerVersionId,
             String previewUrl,
@@ -145,26 +148,6 @@ public final class AppDeploymentDtos {
             String assetManifestHash,
             Integer assetFileCount,
             Instant deployedAt,
-            String errorMessage
-    ) {
-    }
-
-    public record AppWorkerActivateVersionRequest(
-            String version,
-            String workerName,
-            String providerVersionId,
-            String previewHost
-    ) {
-    }
-
-    public record AppWorkerActivateVersionResponse(
-            UUID deploymentId,
-            String provider,
-            String providerDeploymentId,
-            String providerVersionId,
-            String previewUrl,
-            String status,
-            Instant activatedAt,
             String errorMessage
     ) {
     }

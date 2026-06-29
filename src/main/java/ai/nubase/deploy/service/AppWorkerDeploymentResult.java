@@ -4,6 +4,8 @@ import java.time.Instant;
 
 public record AppWorkerDeploymentResult(
         String provider,
+        String deploymentTarget,
+        String dispatchNamespace,
         String providerDeploymentId,
         String providerVersionId,
         String previewUrl,

@@ -12,9 +12,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 class AppDeploymentAdminControllerTest {
 
     @Test
-    void appWorkerDeployIsPlatformAdminAuthenticatedButNotTenantServiceRoleGuarded() throws Exception {
+    void appWorkerPlatformControllerIsPlatformAdminAuthenticatedButNotTenantServiceRoleGuarded() throws Exception {
         assertThat(AppDeploymentAdminController.class.isAnnotationPresent(RequireServiceRole.class)).isFalse();
-        assertThat(AppDeploymentAdminController.class
+        assertThat(AppWorkerPlatformController.class.isAnnotationPresent(RequireServiceRole.class)).isFalse();
+        assertThat(AppWorkerPlatformController.class
                 .getMethod("deployAppWorker", String.class, java.util.List.class, java.util.List.class)
                 .isAnnotationPresent(RequireServiceRole.class)).isFalse();
     }
@@ -33,10 +34,13 @@ class AppDeploymentAdminControllerTest {
                 "logs",
                 "recordStep",
                 "complete",
-                "rollback",
+                "rollback"
+        );
+        assertThat(serviceRoleMethods).doesNotContain(
                 "listAppWorkers",
                 "getAppWorker",
-                "deleteAppWorker"
+                "deleteAppWorker",
+                "deployAppWorker"
         );
     }
 }

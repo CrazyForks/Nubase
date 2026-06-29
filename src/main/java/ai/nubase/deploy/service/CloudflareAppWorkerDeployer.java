@@ -1,6 +1,5 @@
 package ai.nubase.deploy.service;
 
-import ai.nubase.functions.executor.EdgeFunctionExecutorProperties;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -34,7 +33,7 @@ import java.util.Set;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-@ConditionalOnProperty(value = "nubase.functions.enabled", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(value = "nubase.deploy.app-worker.cloudflare.enabled", havingValue = "true")
 public class CloudflareAppWorkerDeployer implements AppWorkerDeployer {
 
     private static final MediaType JSON = MediaType.parse("application/json");
@@ -67,21 +66,26 @@ public class CloudflareAppWorkerDeployer implements AppWorkerDeployer {
             ".map"
     );
 
-    private final EdgeFunctionExecutorProperties properties;
+    private final AppWorkerCloudflareProperties properties;
     private final ObjectMapper objectMapper;
     private OkHttpClient httpClient;
 
     @Override
     public AppWorkerDeploymentResult deploy(AppWorkerDeploymentRequest request) {
-        validateConfig();
+        AppWorkerDeploymentTarget target = request.deploymentTarget() == null
+                ? AppWorkerDeploymentTarget.PREVIEW
+                : request.deploymentTarget();
+        String dispatchNamespace = validateConfig(target);
         String workerName = normalizeWorkerName(request.workerName());
         try {
             List<AppWorkerDeploymentRequest.AppWorkerFile> publicAssets = publicAssetFiles(request);
-            AssetUpload upload = uploadAssets(publicAssets, workerName);
-            String providerVersionId = uploadWorker(request, workerName, upload.completionJwt());
+            AssetUpload upload = uploadAssets(publicAssets, workerName, dispatchNamespace);
+            String providerVersionId = uploadWorker(request, workerName, dispatchNamespace, upload.completionJwt());
             String previewUrl = "https://" + normalizeHost(request.previewHost());
             return new AppWorkerDeploymentResult(
                     "cloudflare",
+                    target.value(),
+                    dispatchNamespace,
                     workerName,
                     providerVersionId,
                     previewUrl,
@@ -93,33 +97,6 @@ public class CloudflareAppWorkerDeployer implements AppWorkerDeployer {
         } catch (Exception e) {
             log.warn("Cloudflare app worker deployment failed: appCode={}, workerName={}, error={}",
                     request.appCode(), workerName, e.toString());
-            throw e instanceof AppWorkerDeploymentException
-                    ? (AppWorkerDeploymentException) e
-                    : new AppWorkerDeploymentException(e.getMessage(), e);
-        }
-    }
-
-    @Override
-    public AppWorkerDeploymentResult activate(String workerName, String versionId, String previewHost) {
-        validateConfig();
-        String name = normalizeWorkerName(workerName);
-        String providerVersionId = requiredText(versionId, "providerVersionId");
-        try {
-            String deploymentId = createDeployment(name, providerVersionId);
-            String previewUrl = "https://" + normalizeHost(previewHost);
-            return new AppWorkerDeploymentResult(
-                    "cloudflare",
-                    deploymentId,
-                    providerVersionId,
-                    previewUrl,
-                    "deployed",
-                    null,
-                    0,
-                    Instant.now()
-            );
-        } catch (Exception e) {
-            log.warn("Cloudflare app worker activation failed: workerName={}, versionId={}, error={}",
-                    name, providerVersionId, e.toString());
             throw e instanceof AppWorkerDeploymentException
                     ? (AppWorkerDeploymentException) e
                     : new AppWorkerDeploymentException(e.getMessage(), e);
@@ -180,7 +157,11 @@ public class CloudflareAppWorkerDeployer implements AppWorkerDeployer {
         return "assets/" + path.substring("server/assets/".length());
     }
 
-    private AssetUpload uploadAssets(List<AppWorkerDeploymentRequest.AppWorkerFile> assetFiles, String workerName) throws IOException {
+    private AssetUpload uploadAssets(
+            List<AppWorkerDeploymentRequest.AppWorkerFile> assetFiles,
+            String workerName,
+            String dispatchNamespace
+    ) throws IOException {
         List<AppWorkerDeploymentRequest.AppWorkerFile> files = assetFiles == null ? List.of() : assetFiles;
         Map<String, Map<String, Object>> manifest = new LinkedHashMap<>();
         Map<String, AppWorkerDeploymentRequest.AppWorkerFile> byHash = new LinkedHashMap<>();
@@ -194,14 +175,14 @@ public class CloudflareAppWorkerDeployer implements AppWorkerDeployer {
         }
         String manifestHash = sha256Hex(objectMapper.writeValueAsBytes(manifest));
         String uploadSessionUrl = apiBase()
-                + "/accounts/" + cf().getAccountId()
-                + "/workers/dispatch/namespaces/" + cf().getDispatchNamespace()
+                + "/accounts/" + properties.getAccountId()
+                + "/workers/dispatch/namespaces/" + dispatchNamespace
                 + "/scripts/" + workerName + "/assets-upload-session";
         Map<String, Object> sessionPayload = Map.of("manifest", manifest);
         Map<String, Object> session = executeJson(new Request.Builder()
                 .url(uploadSessionUrl)
                 .post(RequestBody.create(objectMapper.writeValueAsBytes(sessionPayload), JSON))
-                .header("Authorization", "Bearer " + cf().getApiToken())
+                .header("Authorization", "Bearer " + properties.getApiToken())
                 .build());
 
         String uploadJwt = requiredString(session, "jwt");
@@ -225,7 +206,7 @@ public class CloudflareAppWorkerDeployer implements AppWorkerDeployer {
                 ));
             }
             Map<String, Object> uploadResponse = executeJson(new Request.Builder()
-                    .url(apiBase() + "/accounts/" + cf().getAccountId() + "/workers/assets/upload?base64=true")
+                    .url(apiBase() + "/accounts/" + properties.getAccountId() + "/workers/assets/upload?base64=true")
                     .post(uploadBody.build())
                     .header("Authorization", "Bearer " + uploadJwt)
                     .build());
@@ -242,13 +223,13 @@ public class CloudflareAppWorkerDeployer implements AppWorkerDeployer {
 
     @Override
     public AppWorkerInfo get(String workerName) {
-        validateConfig();
+        String dispatchNamespace = validateConfig(AppWorkerDeploymentTarget.PREVIEW);
         String name = normalizeWorkerName(workerName);
         try {
             Map<String, Object> result = executeJson(new Request.Builder()
-                    .url(scriptUrl(name))
+                    .url(scriptUrl(name, dispatchNamespace))
                     .get()
-                    .header("Authorization", "Bearer " + cf().getApiToken())
+                    .header("Authorization", "Bearer " + properties.getApiToken())
                     .build(), true);
             if (result == null) {
                 return new AppWorkerInfo(name, false, Map.of());
@@ -261,12 +242,12 @@ public class CloudflareAppWorkerDeployer implements AppWorkerDeployer {
 
     @Override
     public void delete(String workerName) {
-        validateConfig();
+        String dispatchNamespace = validateConfig(AppWorkerDeploymentTarget.PREVIEW);
         String name = normalizeWorkerName(workerName);
         Request request = new Request.Builder()
-                .url(scriptUrl(name) + "?force=true")
+                .url(scriptUrl(name, dispatchNamespace) + "?force=true")
                 .delete()
-                .header("Authorization", "Bearer " + cf().getApiToken())
+                .header("Authorization", "Bearer " + properties.getApiToken())
                 .build();
         try (Response ignored = executeCloudflare(request, true)) {
             // A null/closed response (404) means the script was already gone — idempotent success.
@@ -275,14 +256,19 @@ public class CloudflareAppWorkerDeployer implements AppWorkerDeployer {
         }
     }
 
-    private String scriptUrl(String name) {
+    private String scriptUrl(String name, String dispatchNamespace) {
         return apiBase()
-                + "/accounts/" + cf().getAccountId()
-                + "/workers/dispatch/namespaces/" + cf().getDispatchNamespace()
+                + "/accounts/" + properties.getAccountId()
+                + "/workers/dispatch/namespaces/" + dispatchNamespace
                 + "/scripts/" + name;
     }
 
-    private String uploadWorker(AppWorkerDeploymentRequest request, String workerName, String assetCompletionJwt) throws IOException {
+    private String uploadWorker(
+            AppWorkerDeploymentRequest request,
+            String workerName,
+            String dispatchNamespace,
+            String assetCompletionJwt
+    ) throws IOException {
         Map<String, AppWorkerDeploymentRequest.AppWorkerFile> serverFiles = new LinkedHashMap<>();
         for (AppWorkerDeploymentRequest.AppWorkerFile file : request.serverFiles() == null ? List.<AppWorkerDeploymentRequest.AppWorkerFile>of() : request.serverFiles()) {
             String path = normalizeModulePath(file.path());
@@ -315,29 +301,14 @@ public class CloudflareAppWorkerDeployer implements AppWorkerDeployer {
 
         Request upload = new Request.Builder()
                 .url(apiBase()
-                        + "/accounts/" + cf().getAccountId()
-                        + "/workers/dispatch/namespaces/" + cf().getDispatchNamespace()
+                        + "/accounts/" + properties.getAccountId()
+                        + "/workers/dispatch/namespaces/" + dispatchNamespace
                         + "/scripts/" + workerName)
                 .put(body.build())
-                .header("Authorization", "Bearer " + cf().getApiToken())
+                .header("Authorization", "Bearer " + properties.getApiToken())
                 .build();
         try (Response response = executeCloudflare(upload)) {
             return providerVersionId(readEnvelope(response));
-        }
-    }
-
-    private String createDeployment(String workerName, String providerVersionId) throws IOException {
-        Map<String, Object> payload = Map.of(
-                "strategy", "percentage",
-                "versions", List.of(Map.of("version_id", providerVersionId, "percentage", 100))
-        );
-        Request request = new Request.Builder()
-                .url(scriptUrl(workerName) + "/deployments")
-                .post(RequestBody.create(objectMapper.writeValueAsBytes(payload), JSON))
-                .header("Authorization", "Bearer " + cf().getApiToken())
-                .build();
-        try (Response response = executeCloudflare(request)) {
-            return providerDeploymentId(readEnvelope(response), workerName);
         }
     }
 
@@ -481,20 +452,21 @@ public class CloudflareAppWorkerDeployer implements AppWorkerDeployer {
         return httpClient;
     }
 
-    private void validateConfig() {
-        if (!StringUtils.hasText(cf().getAccountId())
-                || !StringUtils.hasText(cf().getDispatchNamespace())
-                || !StringUtils.hasText(cf().getApiToken())) {
-            throw new AppWorkerDeploymentException("Cloudflare account-id, dispatch-namespace and api-token are required");
+    private String validateConfig(AppWorkerDeploymentTarget target) {
+        String dispatchNamespace = properties.dispatchNamespace(target);
+        if (!StringUtils.hasText(properties.getAccountId())
+                || !StringUtils.hasText(dispatchNamespace)
+                || !StringUtils.hasText(properties.getApiToken())) {
+            throw new AppWorkerDeploymentException(
+                    "Cloudflare app-worker account-id, "
+                            + target.value()
+                            + " dispatch-namespace and api-token are required");
         }
-    }
-
-    private EdgeFunctionExecutorProperties.Cloudflare cf() {
-        return properties.getCloudflare();
+        return dispatchNamespace.trim();
     }
 
     private String apiBase() {
-        return cf().getApiBaseUrl().replaceAll("/+$", "");
+        return properties.getApiBaseUrl().replaceAll("/+$", "");
     }
 
     private void sleepBeforeRetry(int attempt) {
@@ -569,13 +541,6 @@ public class CloudflareAppWorkerDeployer implements AppWorkerDeployer {
         return value;
     }
 
-    private String requiredText(String value, String label) {
-        if (!StringUtils.hasText(value)) {
-            throw new AppWorkerDeploymentException(label + " is required");
-        }
-        return value.trim();
-    }
-
     private Map<String, Object> readEnvelope(Response response) throws IOException {
         String body = response.body() == null ? "" : response.body().string();
         if (!StringUtils.hasText(body)) return Map.of();
@@ -585,24 +550,15 @@ public class CloudflareAppWorkerDeployer implements AppWorkerDeployer {
     private String providerVersionId(Map<String, Object> envelope) {
         Map<String, Object> result = resultObject(envelope);
         String id = firstText(
-                stringValue(result.get("id")),
                 stringValue(result.get("version_id")),
-                stringValue(result.get("versionId"))
+                stringValue(result.get("versionId")),
+                stringValue(result.get("etag")),
+                stringValue(resultObject(result, "script").get("etag"))
         );
         if (!StringUtils.hasText(id)) {
-            throw new AppWorkerDeploymentException("Cloudflare script upload response missing worker version id");
+            throw new AppWorkerDeploymentException("Cloudflare script upload response missing worker content reference");
         }
         return id;
-    }
-
-    private String providerDeploymentId(Map<String, Object> envelope, String fallback) {
-        Map<String, Object> result = resultObject(envelope);
-        String id = firstText(
-                stringValue(result.get("id")),
-                stringValue(result.get("deployment_id")),
-                stringValue(result.get("deploymentId"))
-        );
-        return StringUtils.hasText(id) ? id : fallback;
     }
 
     @SuppressWarnings("unchecked")
@@ -611,6 +567,16 @@ public class CloudflareAppWorkerDeployer implements AppWorkerDeployer {
         if (result instanceof Map<?, ?> map) {
             Map<String, Object> out = new LinkedHashMap<>();
             map.forEach((key, value) -> out.put(String.valueOf(key), value));
+            return out;
+        }
+        return Map.of();
+    }
+
+    private Map<String, Object> resultObject(Map<String, Object> envelope, String key) {
+        Object result = envelope.get(key);
+        if (result instanceof Map<?, ?> map) {
+            Map<String, Object> out = new LinkedHashMap<>();
+            map.forEach((entryKey, value) -> out.put(String.valueOf(entryKey), value));
             return out;
         }
         return Map.of();

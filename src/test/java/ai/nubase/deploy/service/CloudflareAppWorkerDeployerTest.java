@@ -1,6 +1,5 @@
 package ai.nubase.deploy.service;
 
-import ai.nubase.functions.executor.EdgeFunctionExecutorProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
@@ -25,19 +24,20 @@ class CloudflareAppWorkerDeployerTest {
                     {"success":true,"result":{"jwt":"completion-token"}}
                     """));
             server.enqueue(new MockResponse().setResponseCode(200).setBody("""
-                    {"success":true,"result":{"id":"cf-version-1"}}
+                    {"success":true,"result":{"id":"appabc","etag":"cf-version-1"}}
                     """));
             server.start();
-            EdgeFunctionExecutorProperties props = props(server);
+            AppWorkerCloudflareProperties props = props(server);
             var deployer = new CloudflareAppWorkerDeployer(props, new ObjectMapper());
 
             var result = deployer.deploy(new AppWorkerDeploymentRequest(
                     "appabc",
                     "v1",
+                    AppWorkerDeploymentTarget.PREVIEW,
                     "appabc",
                     "server/index.js",
-                    "appabc.ottermind.app",
-                    "appabc.ottermind.app",
+                    "server/index.js",
+                    "preview-appabc.ottermind.app",
                     "2026-06-17",
                     List.of("nodejs_compat"),
                     Map.of("NUBASE_URL", "https://appabc.nubase.local"),
@@ -71,14 +71,16 @@ class CloudflareAppWorkerDeployerTest {
             ));
 
             assertThat(result.status()).isEqualTo("deployed");
-            assertThat(result.previewUrl()).isEqualTo("https://appabc.ottermind.app");
+            assertThat(result.deploymentTarget()).isEqualTo("preview");
+            assertThat(result.dispatchNamespace()).isEqualTo("preview-ns");
+            assertThat(result.previewUrl()).isEqualTo("https://preview-appabc.ottermind.app");
             assertThat(result.assetFileCount()).isEqualTo(3);
             assertThat(result.providerDeploymentId()).isEqualTo("appabc");
             assertThat(result.providerVersionId()).isEqualTo("cf-version-1");
 
             var session = server.takeRequest();
             assertThat(session.getMethod()).isEqualTo("POST");
-            assertThat(session.getPath()).isEqualTo("/client/v4/accounts/acct/workers/dispatch/namespaces/ns/scripts/appabc/assets-upload-session");
+            assertThat(session.getPath()).isEqualTo("/client/v4/accounts/acct/workers/dispatch/namespaces/preview-ns/scripts/appabc/assets-upload-session");
             assertThat(session.getBody().readUtf8())
                     .contains("\"/index.html\"")
                     .contains("\"/assets/styles.css\"");
@@ -96,7 +98,7 @@ class CloudflareAppWorkerDeployerTest {
 
             var scriptUpload = server.takeRequest();
             assertThat(scriptUpload.getMethod()).isEqualTo("PUT");
-            assertThat(scriptUpload.getPath()).isEqualTo("/client/v4/accounts/acct/workers/dispatch/namespaces/ns/scripts/appabc");
+            assertThat(scriptUpload.getPath()).isEqualTo("/client/v4/accounts/acct/workers/dispatch/namespaces/preview-ns/scripts/appabc");
             String body = scriptUpload.getBody().readUtf8();
             assertThat(body).contains("metadata")
                     .contains("\"main_module\":\"server/index.js\"")
@@ -119,16 +121,17 @@ class CloudflareAppWorkerDeployerTest {
                     {"success":true,"result":{"version_id":"cf-version-empty-assets"}}
                     """));
             server.start();
-            EdgeFunctionExecutorProperties props = props(server);
+            AppWorkerCloudflareProperties props = props(server);
             var deployer = new CloudflareAppWorkerDeployer(props, new ObjectMapper());
 
             var result = deployer.deploy(new AppWorkerDeploymentRequest(
                     "appabc",
                     "v1",
+                    AppWorkerDeploymentTarget.PREVIEW,
                     "appabc",
                     "server/index.js",
                     "server/index.js",
-                    "appabc.ottermind.app",
+                    "preview-appabc.ottermind.app",
                     null,
                     null,
                     Map.of(),
@@ -150,55 +153,80 @@ class CloudflareAppWorkerDeployerTest {
     }
 
     @Test
-    void activateCreatesDeploymentForExistingWorkerVersion() throws Exception {
+    void deployUploadsProductionWorkerToProductionNamespace() throws Exception {
         try (MockWebServer server = new MockWebServer()) {
             server.enqueue(new MockResponse().setResponseCode(200).setBody("""
-                    {"success":true,"result":{"id":"deployment-1"}}
+                    {"success":true,"result":{"jwt":"completion-token","buckets":[]}}
+                    """));
+            server.enqueue(new MockResponse().setResponseCode(200).setBody("""
+                    {"success":true,"result":{"id":"appabc","etag":"cf-prod-version-1"}}
                     """));
             server.start();
             var deployer = new CloudflareAppWorkerDeployer(props(server), new ObjectMapper());
 
-            var result = deployer.activate("appabc", "cf-version-1", "appabc.ottermind.app");
+            var result = deployer.deploy(new AppWorkerDeploymentRequest(
+                    "appabc",
+                    "v1",
+                    AppWorkerDeploymentTarget.PRODUCTION,
+                    "appabc",
+                    "server/index.js",
+                    "server/index.js",
+                    "appabc.ottermind.app",
+                    "2026-06-17",
+                    List.of("nodejs_compat"),
+                    Map.of(),
+                    Map.of(),
+                    List.of(new AppWorkerDeploymentRequest.AppWorkerFile(
+                            "server/index.js",
+                            "export default { async fetch(){ return new Response('ok') } }".getBytes(StandardCharsets.UTF_8),
+                            "application/javascript+module"
+                    )),
+                    List.of()
+            ));
 
-            assertThat(result.status()).isEqualTo("deployed");
-            assertThat(result.providerDeploymentId()).isEqualTo("deployment-1");
-            assertThat(result.providerVersionId()).isEqualTo("cf-version-1");
+            assertThat(result.deploymentTarget()).isEqualTo("production");
+            assertThat(result.dispatchNamespace()).isEqualTo("production-ns");
+            assertThat(result.providerDeploymentId()).isEqualTo("appabc");
+            assertThat(result.providerVersionId()).isEqualTo("cf-prod-version-1");
             assertThat(result.previewUrl()).isEqualTo("https://appabc.ottermind.app");
 
-            var request = server.takeRequest();
-            assertThat(request.getMethod()).isEqualTo("POST");
-            assertThat(request.getPath())
-                    .isEqualTo("/client/v4/accounts/acct/workers/dispatch/namespaces/ns/scripts/appabc/deployments");
-            assertThat(request.getBody().readUtf8())
-                    .contains("\"strategy\":\"percentage\"")
-                    .contains("\"version_id\":\"cf-version-1\"")
-                    .contains("\"percentage\":100");
+            var session = server.takeRequest();
+            assertThat(session.getPath()).isEqualTo("/client/v4/accounts/acct/workers/dispatch/namespaces/production-ns/scripts/appabc/assets-upload-session");
+            var scriptUpload = server.takeRequest();
+            assertThat(scriptUpload.getPath()).isEqualTo("/client/v4/accounts/acct/workers/dispatch/namespaces/production-ns/scripts/appabc");
         }
     }
 
     @Test
-    void activateCreatesDeploymentForLiveSlotWorkerVersion() throws Exception {
+    void deployFailsClosedWhenTargetNamespaceIsMissing() throws Exception {
         try (MockWebServer server = new MockWebServer()) {
-            server.enqueue(new MockResponse().setResponseCode(200).setBody("""
-                    {"success":true,"result":{"id":"deployment-live-1"}}
-                    """));
             server.start();
-            var deployer = new CloudflareAppWorkerDeployer(props(server), new ObjectMapper());
+            AppWorkerCloudflareProperties props = props(server);
+            props.setDispatchNamespaces(Map.of(AppWorkerDeploymentTarget.PREVIEW.value(), "preview-ns"));
+            var deployer = new CloudflareAppWorkerDeployer(props, new ObjectMapper());
 
-            var result = deployer.activate("appabc-live", "cf-prod-version-1", "appabc-live.ottermind.app");
-
-            assertThat(result.status()).isEqualTo("deployed");
-            assertThat(result.providerDeploymentId()).isEqualTo("deployment-live-1");
-            assertThat(result.providerVersionId()).isEqualTo("cf-prod-version-1");
-            assertThat(result.previewUrl()).isEqualTo("https://appabc-live.ottermind.app");
-
-            var request = server.takeRequest();
-            assertThat(request.getMethod()).isEqualTo("POST");
-            assertThat(request.getPath())
-                    .isEqualTo("/client/v4/accounts/acct/workers/dispatch/namespaces/ns/scripts/appabc-live/deployments");
-            assertThat(request.getBody().readUtf8())
-                    .contains("\"version_id\":\"cf-prod-version-1\"")
-                    .contains("\"percentage\":100");
+            assertThatThrownBy(() -> deployer.deploy(new AppWorkerDeploymentRequest(
+                    "appabc",
+                    "v1",
+                    AppWorkerDeploymentTarget.PRODUCTION,
+                    "appabc",
+                    "server/index.js",
+                    "server/index.js",
+                    "appabc.ottermind.app",
+                    "2026-06-17",
+                    List.of("nodejs_compat"),
+                    Map.of(),
+                    Map.of(),
+                    List.of(new AppWorkerDeploymentRequest.AppWorkerFile(
+                            "server/index.js",
+                            "export default { async fetch(){ return new Response('ok') } }".getBytes(StandardCharsets.UTF_8),
+                            "application/javascript+module"
+                    )),
+                    List.of()
+            )))
+                    .isInstanceOf(AppWorkerDeploymentException.class)
+                    .hasMessageContaining("production dispatch-namespace");
+            assertThat(server.getRequestCount()).isZero();
         }
     }
 
@@ -206,16 +234,17 @@ class CloudflareAppWorkerDeployerTest {
     void deployFailsClosedWhenServerPublicAssetConflictsWithClientAssetPath() throws Exception {
         try (MockWebServer server = new MockWebServer()) {
             server.start();
-            EdgeFunctionExecutorProperties props = props(server);
+            AppWorkerCloudflareProperties props = props(server);
             var deployer = new CloudflareAppWorkerDeployer(props, new ObjectMapper());
 
             assertThatThrownBy(() -> deployer.deploy(new AppWorkerDeploymentRequest(
                     "appabc",
                     "v1",
+                    AppWorkerDeploymentTarget.PREVIEW,
                     "appabc",
                     "server/index.js",
-                    "appabc.ottermind.app",
-                    "appabc.ottermind.app",
+                    "server/index.js",
+                    "preview-appabc.ottermind.app",
                     "2026-06-17",
                     List.of("nodejs_compat"),
                     Map.of(),
@@ -263,7 +292,7 @@ class CloudflareAppWorkerDeployerTest {
             var request = server.takeRequest();
             assertThat(request.getMethod()).isEqualTo("GET");
             assertThat(request.getPath())
-                    .isEqualTo("/client/v4/accounts/acct/workers/dispatch/namespaces/ns/scripts/appabc");
+                    .isEqualTo("/client/v4/accounts/acct/workers/dispatch/namespaces/preview-ns/scripts/appabc");
             assertThat(request.getHeader("Authorization")).isEqualTo("Bearer token");
         }
     }
@@ -295,7 +324,7 @@ class CloudflareAppWorkerDeployerTest {
             var request = server.takeRequest();
             assertThat(request.getMethod()).isEqualTo("DELETE");
             assertThat(request.getPath())
-                    .isEqualTo("/client/v4/accounts/acct/workers/dispatch/namespaces/ns/scripts/appabc?force=true");
+                    .isEqualTo("/client/v4/accounts/acct/workers/dispatch/namespaces/preview-ns/scripts/appabc?force=true");
         }
     }
 
@@ -313,12 +342,15 @@ class CloudflareAppWorkerDeployerTest {
         }
     }
 
-    private EdgeFunctionExecutorProperties props(MockWebServer server) {
-        EdgeFunctionExecutorProperties props = new EdgeFunctionExecutorProperties();
-        props.getCloudflare().setAccountId("acct");
-        props.getCloudflare().setApiToken("token");
-        props.getCloudflare().setDispatchNamespace("ns");
-        props.getCloudflare().setApiBaseUrl(server.url("/client/v4").toString().replaceAll("/$", ""));
+    private AppWorkerCloudflareProperties props(MockWebServer server) {
+        AppWorkerCloudflareProperties props = new AppWorkerCloudflareProperties();
+        props.setAccountId("acct");
+        props.setApiToken("token");
+        props.setApiBaseUrl(server.url("/client/v4").toString().replaceAll("/$", ""));
+        props.setDispatchNamespaces(Map.of(
+                AppWorkerDeploymentTarget.PREVIEW.value(), "preview-ns",
+                AppWorkerDeploymentTarget.PRODUCTION.value(), "production-ns"
+        ));
         return props;
     }
 }

@@ -4,18 +4,13 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 @Component
-@ConditionalOnProperty(value = "nubase.functions.enabled", havingValue = "false")
+@ConditionalOnProperty(value = "nubase.deploy.app-worker.cloudflare.enabled", havingValue = "false", matchIfMissing = true)
 public class DisabledAppWorkerDeployer implements AppWorkerDeployer {
 
-    private static final String DISABLED = "App worker deployment requires nubase.functions.enabled=true";
+    private static final String DISABLED = "App worker deployment requires nubase.deploy.app-worker.cloudflare.enabled=true";
 
     @Override
     public AppWorkerDeploymentResult deploy(AppWorkerDeploymentRequest request) {
-        throw new AppWorkerDeploymentException(DISABLED);
-    }
-
-    @Override
-    public AppWorkerDeploymentResult activate(String workerName, String versionId, String previewHost) {
         throw new AppWorkerDeploymentException(DISABLED);
     }
 

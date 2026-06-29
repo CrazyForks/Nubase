@@ -107,8 +107,8 @@ class AppWorkerServiceTest {
         UUID auditId = UUID.randomUUID();
         when(deploymentRepository.findByProjectRefOrderByCreatedAtDesc(eq("appabc"), any(Pageable.class)))
                 .thenReturn(List.of(appWorkerDeployment("appabc", "v1", AppDeployment.STATUS_SUCCEEDED)));
-        when(deploymentService.create(any(CreateDeploymentRequest.class))).thenReturn(auditResponse(auditId));
-        when(deploymentService.complete(eq(auditId), any(CompleteDeploymentRequest.class))).thenReturn(auditResponse(auditId));
+        when(deploymentService.createForProjectRef(eq("appabc"), any(CreateDeploymentRequest.class))).thenReturn(auditResponse(auditId));
+        when(deploymentService.completeForProjectRef(eq("appabc"), eq(auditId), any(CompleteDeploymentRequest.class))).thenReturn(auditResponse(auditId));
 
         AppWorkerDeleteResponse response = service.delete("appabc");
 
@@ -116,8 +116,25 @@ class AppWorkerServiceTest {
         assertThat(response.workerName()).isEqualTo("appabc");
         assertThat(response.auditDeploymentId()).isEqualTo(auditId);
         verify(deployer).delete("appabc");
-        verify(deploymentService).recordStep(eq(auditId), any(RecordDeploymentStepRequest.class));
-        verify(deploymentService).complete(eq(auditId), any(CompleteDeploymentRequest.class));
+        verify(deploymentService).recordStepForProjectRef(eq("appabc"), eq(auditId), any(RecordDeploymentStepRequest.class));
+        verify(deploymentService).completeForProjectRef(eq("appabc"), eq(auditId), any(CompleteDeploymentRequest.class));
+    }
+
+    @Test
+    void platformDeleteUsesExplicitAppCodeWithoutTenantContext() {
+        MultiTenancyContext.clear();
+        UUID auditId = UUID.randomUUID();
+        when(deploymentRepository.findByProjectRefOrderByCreatedAtDesc(eq("appabc"), any(Pageable.class)))
+                .thenReturn(List.of(appWorkerDeployment("appabc", "v1", AppDeployment.STATUS_SUCCEEDED)));
+        when(deploymentService.createForProjectRef(eq("appabc"), any(CreateDeploymentRequest.class))).thenReturn(auditResponse(auditId));
+        when(deploymentService.completeForProjectRef(eq("appabc"), eq(auditId), any(CompleteDeploymentRequest.class))).thenReturn(auditResponse(auditId));
+
+        AppWorkerDeleteResponse response = service.delete("appabc", "appabc");
+
+        assertThat(response.deleted()).isTrue();
+        verify(deploymentRepository).findByProjectRefOrderByCreatedAtDesc(eq("appabc"), any(Pageable.class));
+        verify(deploymentService).createForProjectRef(eq("appabc"), any(CreateDeploymentRequest.class));
+        verify(deploymentService).recordStepForProjectRef(eq("appabc"), eq(auditId), any(RecordDeploymentStepRequest.class));
     }
 
     @Test

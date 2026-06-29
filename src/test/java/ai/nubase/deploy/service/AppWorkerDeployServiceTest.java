@@ -70,9 +70,11 @@ class AppWorkerDeployServiceTest {
         ));
         when(deployer.deploy(any(AppWorkerDeploymentRequest.class))).thenReturn(new AppWorkerDeploymentResult(
                 "cloudflare",
+                "preview",
+                "preview-ns",
                 "appabc",
                 "cf-version-1",
-                "https://appabc.ottermind.app",
+                "https://preview-appabc.ottermind.app",
                 "deployed",
                 "asset-hash",
                 1,
@@ -82,7 +84,9 @@ class AppWorkerDeployServiceTest {
         var response = service.deploy(metadata(), List.of(serverFile()), List.of(assetFile()));
 
         assertThat(response.status()).isEqualTo("deployed");
-        assertThat(response.previewUrl()).isEqualTo("https://appabc.ottermind.app");
+        assertThat(response.deploymentTarget()).isEqualTo("preview");
+        assertThat(response.dispatchNamespace()).isEqualTo("preview-ns");
+        assertThat(response.previewUrl()).isEqualTo("https://preview-appabc.ottermind.app");
         assertThat(response.assetManifestHash()).isEqualTo("asset-hash");
         assertThat(response.providerDeploymentId()).isEqualTo("appabc");
         assertThat(response.providerVersionId()).isEqualTo("cf-version-1");
@@ -90,6 +94,7 @@ class AppWorkerDeployServiceTest {
         ArgumentCaptor<AppWorkerDeploymentRequest> request = ArgumentCaptor.forClass(AppWorkerDeploymentRequest.class);
         verify(deployer).deploy(request.capture());
         assertThat(request.getValue().appCode()).isEqualTo("appabc");
+        assertThat(request.getValue().deploymentTarget()).isEqualTo(AppWorkerDeploymentTarget.PREVIEW);
         assertThat(request.getValue().mainModule()).isEqualTo("server/index.js");
         assertThat(request.getValue().plainTextBindings()).containsEntry("NUBASE_RUNTIME_MODE", "same-origin-proxy");
         assertThat(request.getValue().plainTextBindings()).containsEntry("NUBASE_PROJECT_REF", "appabc");
@@ -108,6 +113,7 @@ class AppWorkerDeployServiceTest {
         ArgumentCaptor<CreateDeploymentRequest> createRequest = ArgumentCaptor.forClass(CreateDeploymentRequest.class);
         verify(deploymentService).createForProjectRef(eq("appabc"), createRequest.capture());
         Map<String, Object> manifestSummary = createRequest.getValue().manifestSummary();
+        assertThat(manifestSummary).containsEntry("deploymentTarget", "preview");
         assertThat(manifestSummary).containsEntry("runtimeMode", "same-origin-proxy");
         assertThat(manifestSummary).containsEntry("upstreamEndpoint", "https://rebel-earl-transport-floyd.trycloudflare.com");
         assertThat(manifestSummary).containsEntry("proxyEnabled", true);
@@ -134,9 +140,11 @@ class AppWorkerDeployServiceTest {
         ));
         when(deployer.deploy(any(AppWorkerDeploymentRequest.class))).thenReturn(new AppWorkerDeploymentResult(
                 "cloudflare",
+                "preview",
+                "preview-ns",
                 "appfrontend",
                 "cf-version-frontend",
-                "https://appfrontend.ottermind.app",
+                "https://preview-appfrontend.ottermind.app",
                 "deployed",
                 "asset-hash",
                 1,
@@ -208,6 +216,7 @@ class AppWorkerDeployServiceTest {
                 "server/index.js",
                 "dist/client",
                 null,
+                "preview",
                 null,
                 null,
                 null,
@@ -231,12 +240,14 @@ class AppWorkerDeployServiceTest {
                 null, null, "v1", Instant.now(), Instant.now(), null
         ));
         when(deployer.deploy(any(AppWorkerDeploymentRequest.class))).thenReturn(new AppWorkerDeploymentResult(
-                "cloudflare", "appabc-preview", "cf-version-preview", "https://appabc-preview.ottermind.app", "deployed",
+                "cloudflare",
+                "preview",
+                "preview-ns", "appabc-preview", "cf-version-preview", "https://preview-appabc-preview.ottermind.app", "deployed",
                 "asset-hash", 0, Instant.parse("2026-06-17T00:00:00Z")
         ));
         var metadata = new AppWorkerDeployMetadata(
                 "appabc", "v1", "appabc-preview", "server/index.js", "server/index.js",
-                "dist/client", null, null, null, null, null, null
+                "dist/client", null, "preview", null, null, null, null, null
         );
 
         var response = service.deploy(metadata, List.of(serverFile()), List.of());
@@ -248,96 +259,34 @@ class AppWorkerDeployServiceTest {
     }
 
     @Test
-    void deploysLiveSlotWorkerNameUnderSameAppCode() {
+    void deploysProductionTargetWithSameWorkerName() {
         UUID deploymentId = UUID.randomUUID();
         when(deploymentService.createForProjectRef(eq("appabc"), any(CreateDeploymentRequest.class))).thenReturn(new DeploymentResponse(
                 deploymentId, "appabc", "appabc", AppDeployment.STATUS_RUNNING, null, Map.of(),
                 null, null, "v1", Instant.now(), Instant.now(), null
         ));
         when(deployer.deploy(any(AppWorkerDeploymentRequest.class))).thenReturn(new AppWorkerDeploymentResult(
-                "cloudflare", "appabc-live", "cf-version-live", "https://appabc-live.ottermind.app", "deployed",
+                "cloudflare",
+                "production",
+                "production-ns", "appabc", "cf-version-live", "https://appabc.ottermind.app", "deployed",
                 "asset-hash", 0, Instant.parse("2026-06-17T00:00:00Z")
         ));
         var metadata = new AppWorkerDeployMetadata(
-                "appabc", "v1", "appabc-live", "server/index.js", "server/index.js",
-                "dist/client", "appabc-live.ottermind.app", null, null, null, null, null
+                "appabc", "v1", "appabc", "server/index.js", "server/index.js",
+                "dist/client", "appabc.ottermind.app", "production", null, null, null, null, null
         );
 
         var response = service.deploy(metadata, List.of(serverFile()), List.of());
 
         assertThat(response.status()).isEqualTo("deployed");
-        assertThat(response.providerDeploymentId()).isEqualTo("appabc-live");
+        assertThat(response.deploymentTarget()).isEqualTo("production");
+        assertThat(response.dispatchNamespace()).isEqualTo("production-ns");
+        assertThat(response.providerDeploymentId()).isEqualTo("appabc");
         ArgumentCaptor<AppWorkerDeploymentRequest> request = ArgumentCaptor.forClass(AppWorkerDeploymentRequest.class);
         verify(deployer).deploy(request.capture());
-        assertThat(request.getValue().workerName()).isEqualTo("appabc-live");
-        assertThat(request.getValue().previewHost()).isEqualTo("appabc-live.ottermind.app");
-    }
-
-    @Test
-    void activatesExistingAppWorkerVersionWithoutChangingWorkerName() {
-        UUID deploymentId = UUID.randomUUID();
-        when(deploymentService.createForProjectRef(eq("appabc"), any(CreateDeploymentRequest.class))).thenReturn(new DeploymentResponse(
-                deploymentId, "appabc", "appabc", AppDeployment.STATUS_RUNNING, null, Map.of(),
-                null, null, "v2", Instant.now(), Instant.now(), null
-        ));
-        when(deployer.activate(eq("appabc"), eq("cf-version-1"), eq("appabc.ottermind.app"))).thenReturn(new AppWorkerDeploymentResult(
-                "cloudflare",
-                "deployment-1",
-                "cf-version-1",
-                "https://appabc.ottermind.app",
-                "deployed",
-                null,
-                0,
-                Instant.parse("2026-06-17T00:00:00Z")
-        ));
-
-        var response = service.activateVersion(new ai.nubase.deploy.dto.AppDeploymentDtos.AppWorkerActivateVersionRequest(
-                "v2",
-                "appabc",
-                "cf-version-1",
-                "appabc.ottermind.app"
-        ));
-
-        assertThat(response.status()).isEqualTo("deployed");
-        assertThat(response.providerDeploymentId()).isEqualTo("deployment-1");
-        assertThat(response.providerVersionId()).isEqualTo("cf-version-1");
-        verify(deployer).activate("appabc", "cf-version-1", "appabc.ottermind.app");
-        ArgumentCaptor<CreateDeploymentRequest> createRequest = ArgumentCaptor.forClass(CreateDeploymentRequest.class);
-        verify(deploymentService).createForProjectRef(eq("appabc"), createRequest.capture());
-        assertThat(createRequest.getValue().manifestSummary())
-                .containsEntry("type", "app_worker_activate_version")
-                .containsEntry("workerName", "appabc")
-                .containsEntry("providerVersionId", "cf-version-1");
-    }
-
-    @Test
-    void activatesExistingLiveSlotVersionWithoutTouchingPreviewWorker() {
-        UUID deploymentId = UUID.randomUUID();
-        when(deploymentService.createForProjectRef(eq("appabc"), any(CreateDeploymentRequest.class))).thenReturn(new DeploymentResponse(
-                deploymentId, "appabc", "appabc", AppDeployment.STATUS_RUNNING, null, Map.of(),
-                null, null, "v2", Instant.now(), Instant.now(), null
-        ));
-        when(deployer.activate(eq("appabc-live"), eq("cf-prod-version-1"), eq("appabc-live.ottermind.app"))).thenReturn(new AppWorkerDeploymentResult(
-                "cloudflare",
-                "deployment-live-1",
-                "cf-prod-version-1",
-                "https://appabc-live.ottermind.app",
-                "deployed",
-                null,
-                0,
-                Instant.parse("2026-06-17T00:00:00Z")
-        ));
-
-        var response = service.activateVersion(new ai.nubase.deploy.dto.AppDeploymentDtos.AppWorkerActivateVersionRequest(
-                "v2",
-                "appabc-live",
-                "cf-prod-version-1",
-                "appabc-live.ottermind.app"
-        ));
-
-        assertThat(response.status()).isEqualTo("deployed");
-        assertThat(response.previewUrl()).isEqualTo("https://appabc-live.ottermind.app");
-        verify(deployer).activate("appabc-live", "cf-prod-version-1", "appabc-live.ottermind.app");
+        assertThat(request.getValue().deploymentTarget()).isEqualTo(AppWorkerDeploymentTarget.PRODUCTION);
+        assertThat(request.getValue().workerName()).isEqualTo("appabc");
+        assertThat(request.getValue().previewHost()).isEqualTo("appabc.ottermind.app");
     }
 
     private AppWorkerDeployMetadata metadata() {
@@ -348,7 +297,8 @@ class AppWorkerDeployServiceTest {
                 "server/index.js",
                 "server/index.js",
                 "dist/client",
-                "appabc.ottermind.app",
+                "preview-appabc.ottermind.app",
+                "preview",
                 "2026-06-17",
                 List.of("nodejs_compat"),
                 Map.of("NUBASE_RUNTIME_MODE", "same-origin-proxy"),
@@ -370,7 +320,8 @@ class AppWorkerDeployServiceTest {
                 "server/index.js",
                 "server/index.js",
                 "dist/client",
-                "appfrontend.ottermind.app",
+                "preview-appfrontend.ottermind.app",
+                "preview",
                 "2026-06-17",
                 List.of("nodejs_compat"),
                 null,
